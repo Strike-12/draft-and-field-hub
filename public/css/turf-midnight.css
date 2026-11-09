@@ -103,6 +103,9 @@ body.light .sync-form input { background: #FFFFFF; color: #0B132B; }
 }
 .btn-primary:hover { filter: brightness(1.1); }
 .sync-status { margin-top: 10px; color: var(--turf); font-size: 0.9rem; }
+.sync-status.sync-loading { color: #FCD34D; }
+.sync-status.sync-error { color: #EF4444; }
+.sync-status.sync-success { color: var(--turf); font-weight: 600; }
 
 /* Lineup grid */
 .lineup-grid {
