@@ -1,0 +1,140 @@
+/* ============================================
+   Draft & Field Hub — "Turf & Midnight" theme
+   ============================================ */
+
+:root {
+  --midnight: #0B132B;
+  --midnight-2: #1C2540;
+  --turf: #06D6A0;
+  --white: #FFFFFF;
+  --muted: #7B8AA5;
+  --card-radius: 14px;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+  background: var(--midnight);
+  color: var(--white);
+  min-height: 100vh;
+  transition: background 0.3s ease, color 0.3s ease;
+}
+
+/* Light mode */
+body.light {
+  --midnight: #F4F6FA;
+  --midnight-2: #FFFFFF;
+  --muted: #5A6B85;
+  background: var(--midnight);
+  color: #0B132B;
+}
+body.light .slot { background: var(--midnight-2); border-color: #D7DEE9; color: #0B132B; }
+body.light .card { background: var(--midnight-2); box-shadow: 0 4px 14px rgba(11,19,43,0.08); }
+
+/* Topbar */
+.topbar {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 16px 24px;
+  background: var(--midnight-2);
+  border-bottom: 3px solid var(--turf);
+  position: sticky; top: 0; z-index: 10;
+}
+.brand { display: flex; align-items: center; gap: 10px; }
+.logo { font-size: 1.6rem; }
+.topbar h1 { font-size: 1.3rem; letter-spacing: 0.5px; }
+.theme-toggle {
+  background: transparent; border: 2px solid var(--turf);
+  color: var(--turf); border-radius: 50%;
+  width: 42px; height: 42px; font-size: 1.2rem;
+  cursor: pointer; transition: transform 0.2s ease;
+}
+.theme-toggle:hover { transform: rotate(20deg) scale(1.05); }
+
+/* Layout */
+.app {
+  max-width: 1000px; margin: 0 auto; padding: 24px 16px;
+  display: grid; gap: 20px;
+}
+.card {
+  background: var(--midnight-2);
+  border-radius: var(--card-radius);
+  padding: 20px;
+  border: 1px solid rgba(6, 214, 160, 0.15);
+  box-shadow: 0 4px 14px rgba(0,0,0,0.25);
+}
+.card h2 { margin-bottom: 12px; font-size: 1.15rem; }
+.badge {
+  background: var(--turf); color: var(--midnight);
+  font-size: 0.7rem; font-weight: 700; padding: 2px 8px;
+  border-radius: 999px; vertical-align: middle; margin-left: 6px;
+}
+.muted { color: var(--muted); font-size: 0.9rem; }
+
+/* Sport switcher */
+.sport-switcher {
+  display: flex; gap: 8px; justify-content: center;
+}
+.sport-tab {
+  flex: 1; max-width: 200px; padding: 12px;
+  border: 2px solid transparent; border-radius: 10px;
+  background: var(--midnight-2); color: var(--white);
+  font-size: 1rem; font-weight: 700; cursor: pointer;
+  transition: all 0.2s ease;
+}
+.sport-tab.active {
+  border-color: var(--turf); color: var(--turf);
+  box-shadow: 0 0 12px rgba(6,214,160,0.35);
+}
+
+/* Sync form */
+.sync-form { display: grid; gap: 10px; margin-top: 12px; }
+.sync-form input {
+  padding: 12px; border-radius: 8px;
+  border: 1px solid var(--muted); background: var(--midnight);
+  color: var(--white); font-size: 0.95rem;
+}
+body.light .sync-form input { background: #FFFFFF; color: #0B132B; }
+.btn-primary {
+  padding: 12px; border: none; border-radius: 8px;
+  background: var(--turf); color: var(--midnight);
+  font-weight: 700; font-size: 1rem; cursor: pointer;
+  transition: filter 0.2s ease;
+}
+.btn-primary:hover { filter: brightness(1.1); }
+.sync-status { margin-top: 10px; color: var(--turf); font-size: 0.9rem; }
+.sync-status.sync-loading { color: #FCD34D; }
+.sync-status.sync-error { color: #EF4444; }
+.sync-status.sync-success { color: var(--turf); font-weight: 600; }
+
+/* Lineup grid */
+.lineup-grid {
+  display: grid; gap: 10px;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+}
+.slot {
+  background: var(--midnight);
+  border: 1px dashed rgba(6,214,160,0.4);
+  border-radius: 10px; padding: 14px;
+  display: flex; flex-direction: column; gap: 6px;
+}
+.slot-pos {
+  color: var(--turf); font-weight: 800; font-size: 0.8rem;
+  letter-spacing: 1px;
+}
+.slot-player { font-size: 0.95rem; color: var(--muted); }
+.slot.filled .slot-player { color: var(--white); }
+body.light .slot.filled .slot-player { color: #0B132B; }
+
+.hidden { display: none; }
+
+/* Footer */
+.footer {
+  text-align: center; padding: 24px;
+  color: var(--muted); font-size: 0.85rem;
+}
+
+@media (max-width: 600px) {
+  .topbar h1 { font-size: 1.05rem; }
+  .lineup-grid { grid-template-columns: repeat(2, 1fr); }
+}
