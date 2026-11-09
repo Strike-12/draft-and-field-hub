@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Draft &amp; Field Hub</title>
+  <link rel="stylesheet" href="css/turf-midnight.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo">&#127944;</span>
+      <h1>Draft &amp; Field Hub</h1>
+    </div>
+    <button id="themeToggle" class="theme-toggle" aria-label="Toggle dark/light mode" title="Toggle dark/light mode">&#9789;</button>
+  </header>
+
+  <main class="app">
+    <!-- Sport Switcher -->
+    <nav class="sport-switcher" role="tablist">
+      <button class="sport-tab active" data-sport="nfl" role="tab">NFL</button>
+      <button class="sport-tab" data-sport="nba" role="tab">NBA</button>
+    </nav>
+
+    <!-- ESPN Sync (Phase 2 placeholder) -->
+    <section class="card sync-card">
+      <h2>ESPN League Sync</h2>
+      <p class="muted">1-tap sync coming in Phase 2. Enter your league ID and tokens to load rosters instantly.</p>
+      <form id="espnSyncForm" class="sync-form">
+        <input type="text" id="leagueId" placeholder="ESPN League ID" aria-label="ESPN League ID" />
+        <input type="password" id="swid" placeholder="SWID token" aria-label="SWID token" />
+        <input type="password" id="espnS2" placeholder="espn_s2 token" aria-label="espn_s2 token" />
+        <button type="submit" class="btn-primary">Sync League</button>
+      </form>
+      <p id="syncStatus" class="sync-status" aria-live="polite"></p>
+    </section>
+
+    <!-- NFL Lineup -->
+    <section class="card lineup-card" id="lineup-nfl">
+      <h2>NFL Starting Lineup <span class="badge">8 Slots</span></h2>
+      <div class="lineup-grid">
+        <div class="slot" data-slot="QB"><span class="slot-pos">QB</span><span class="slot-player">Empty</span></div>
+        <div class="slot" data-slot="RB"><span class="slot-pos">RB</span><span class="slot-player">Empty</span></div>
+        <div class="slot" data-slot="RB"><span class="slot-pos">RB</span><span class="slot-player">Empty</span></div>
+        <div class="slot" data-slot="WR"><span class="slot-pos">WR</span><span class="slot-player">Empty</span></div>
+        <div class="slot" data-slot="WR"><span class="slot-pos">WR</span><span class="slot-player">Empty</span></div>
+        <div class="slot" data-slot="TE"><span class="slot-pos">TE</span><span class="slot-player">Empty</span></div>
+        <div class="slot" data-slot="FLEX"><span class="slot-pos">FLEX</span><span class="slot-player">Empty</span></div>
+        <div class="slot" data-slot="D/ST"><span class="slot-pos">D/ST</span><span class="slot-player">Empty</span></div>
+        <div class="slot" data-slot="K"><span class="slot-pos">K</span><span class="slot-player">Empty</span></div>
+      </div>
+    </section>
+
+    <!-- NBA Lineup -->
+    <section class="card lineup-card hidden" id="lineup-nba">
+      <h2>NBA Starting Lineup <span class="badge">10 Slots</span></h2>
+      <div class="lineup-grid">
+        <div class="slot" data-slot="PG"><span class="slot-pos">PG</span><span class="slot-player">Empty</span></div>
+        <div class="slot" data-slot="SG"><span class="slot-pos">SG</span><span class="slot-player">Empty</span></div>
+        <div class="slot" data-slot="SF"><span class="slot-pos">SF</span><span class="slot-player">Empty</span></div>
+        <div class="slot" data-slot="PF"><span class="slot-pos">PF</span><span class="slot-player">Empty</span></div>
+        <div class="slot" data-slot="C"><span class="slot-pos">C</span><span class="slot-player">Empty</span></div>
+        <div class="slot" data-slot="G"><span class="slot-pos">G</span><span class="slot-player">Empty</span></div>
+        <div class="slot" data-slot="F"><span class="slot-pos">F</span><span class="slot-player">Empty</span></div>
+        <div class="slot" data-slot="UTIL"><span class="slot-pos">UTIL</span><span class="slot-player">Empty</span></div>
+        <div class="slot" data-slot="UTIL"><span class="slot-pos">UTIL</span><span class="slot-player">Empty</span></div>
+        <div class="slot" data-slot="UTIL"><span class="slot-pos">UTIL</span><span class="slot-player">Empty</span></div>
+      </div>
+    </section>
+
+    <!-- Live Feed (Phase 3 placeholder) -->
+    <section class="card feed-card">
+      <h2>Top Performers</h2>
+      <p class="muted">Live feed arrives in Phase 3.</p>
+    </section>
+
+    <!-- Quick Compare (Phase 4 placeholder) -->
+    <section class="card compare-card">
+      <h2>Quick Compare</h2>
+      <p class="muted">Side-by-side player comparison arrives in Phase 4.</p>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <p>Draft &amp; Field Hub &mdash; Turf &amp; Midnight</p>
+  </footer>
+
+  <script>
+    // Sport switcher
+    document.querySelectorAll('.sport-tab').forEach(function (tab) {
+      tab.addEventListener('click', function () {
+        document.querySelectorAll('.sport-tab').forEach(function (t) { t.classList.remove('active'); });
+        tab.classList.add('active');
+        var sport = tab.dataset.sport;
+        document.getElementById('lineup-nfl').classList.toggle('hidden', sport !== 'nfl');
+        document.getElementById('lineup-nba').classList.toggle('hidden', sport !== 'nba');
+      });
+    });
+
+    // Dark/Light mode toggle (persisted)
+    var themeToggle = document.getElementById('themeToggle');
+    var saved = localStorage.getItem('theme');
+    if (saved === 'light') { document.body.classList.add('light'); themeToggle.textContent = '\u2600'; }
+    themeToggle.addEventListener('click', function () {
+      var isLight = document.body.classList.toggle('light');
+      themeToggle.textContent = isLight ? '\u2600' : '\u263D';
+      localStorage.setItem('theme', isLight ? 'light' : 'dark');
+    });
+
+    // ESPN sync stub (Phase 2)
+    document.getElementById('espnSyncForm').addEventListener('submit', function (e) {
+      e.preventDefault();
+      document.getElementById('syncStatus').textContent = 'ESPN sync lands in Phase 2 \u2014 hang tight!';
+    });
+  </script>
+</body>
+</html>

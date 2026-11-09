@@ -1,0 +1,12 @@
+{
+  "name": "draft-and-field-hub",
+  "version": "0.1.0",
+  "description": "Fantasy football & basketball helper — Turf & Midnight",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2"
+  }
+}
