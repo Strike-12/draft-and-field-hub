@@ -11,7 +11,7 @@ const express = require('express');
 const path = require('path');
 
 const app = express();
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 5000;
 
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
@@ -26,6 +26,6 @@ app.use('/api', require('./routes/compare'));
 app.use('/api', require('./routes/assistant'));
 app.use('/api', require('./routes/buildteam'));
 
-app.listen(PORT, () => {
+app.listen(PORT, '0.0.0.0', () => {
   console.log(`Draft & Field Hub listening on http://localhost:${PORT}`);
 });
