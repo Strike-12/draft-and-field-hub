@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Draft &amp; Field Hub</title>
+  <link rel="stylesheet" href="css/turf-midnight.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand"><span class="logo">&#127944;</span><h1>Draft &amp; Field Hub</h1></div>
+    <button id="themeToggle" class="theme-toggle" aria-label="Toggle dark/light mode" title="Toggle dark/light mode">&#9789;</button>
+  </header>
+
+  <main class="app">
+    <nav class="sport-switcher" role="tablist">
+      <button class="sport-tab active" data-sport="nfl" role="tab">NFL</button>
+      <button class="sport-tab" data-sport="nba" role="tab">NBA</button>
+    </nav>
+
+    <!-- ESPN Sync (Phase 2) -->
+    <section class="card sync-card">
+      <h2>ESPN League Sync</h2>
+      <p class="muted">1-tap sync: enter your League ID, SWID and espn_s2 tokens to load rosters instantly.</p>
+      <form id="espnSyncForm" class="sync-form">
+        <input type="text" id="leagueId" placeholder="ESPN League ID" aria-label="ESPN League ID" />
+        <input type="password" id="swid" placeholder="SWID token" aria-label="SWID token" />
+        <input type="password" id="espnS2" placeholder="espn_s2 token" aria-label="espn_s2 token" />
+        <button type="submit" class="btn-primary">Sync League</button>
+      </form>
+      <p id="syncStatus" class="sync-status" aria-live="polite"></p>
+    </section>
+
+    <!-- NFL Lineup -->
+    <section class="card lineup-card" id="lineup-nfl">
+      <h2>NFL Starting Lineup <span class="badge">8 Slots</span></h2>
+      <div class="lineup-grid" id="grid-nfl"></div>
+    </section>
+
+    <!-- NBA Lineup -->
+    <section class="card lineup-card hidden" id="lineup-nba">
+      <h2>NBA Starting Lineup <span class="badge">10 Slots</span></h2>
+      <div class="lineup-grid" id="grid-nba"></div>
+    </section>
+
+    <!-- Live Feed (Phase 3) -->
+    <section class="card feed-card">
+      <h2>Top Performers <span id="feedSport">NFL</span></h2>
+      <table>
+        <thead><tr><th>Player</th><th>Stat</th><th>Team</th><th>Game</th></tr></thead>
+        <tbody id="feedBody"><tr><td colspan="4" class="muted">Loading feed\u2026</td></tr></tbody>
+      </table>
+    </section>
+
+    <!-- Quick Compare (Phase 4 placeholder) -->
+    <section class="card compare-card">
+      <h2>Quick Compare</h2>
+      <p class="muted">Side-by-side player comparison arrives in Phase 4.</p>
+    </section>
+  </main>
+
+  <footer class="footer"><p>Draft &amp; Field Hub &mdash; Turf &amp; Midnight</p></footer>
+
+  <script>
+    var currentSport = 'nfl';
+
+    // Sport switcher
+    document.querySelectorAll('.sport-tab').forEach(function (tab) {
+      tab.addEventListener('click', function () {
+        document.querySelectorAll('.sport-tab').forEach(function (t) { t.classList.remove('active'); });
+        tab.classList.add('active');
+        currentSport = tab.dataset.sport;
+        document.getElementById('lineup-nfl').classList.toggle('hidden', currentSport !== 'nfl');
+        document.getElementById('lineup-nba').classList.toggle('hidden', currentSport !== 'nba');
+        loadFeed();
+      });
+    });
+
+    // Dark/Light mode toggle (Phase 3)
+    var themeToggle = document.getElementById('themeToggle');
+    if (localStorage.getItem('theme') === 'light') { document.body.classList.add('light'); themeToggle.textContent = '\u2600'; }
+    themeToggle.addEventListener('click', function () {
+      var isLight = document.body.classList.toggle('light');
+      themeToggle.textContent = isLight ? '\u2600' : '\u263D';
+      localStorage.setItem('theme', isLight ? 'light' : 'dark');
+    });
+
+    // ESPN sync (Phase 2)
+    document.getElementById('espnSyncForm').addEventListener('submit', async function (e) {
+      e.preventDefault();
+      var status = document.getElementById('syncStatus');
+      status.textContent = 'Syncing with ESPN\u2026';
+      try {
+        var res = await fetch('/api/sync/espn', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            leagueId: document.getElementById('leagueId').value.trim(),
+            swid: document.getElementById('swid').value.trim(),
+            espnS2: document.getElementById('espnS2').value.trim()
+          })
+        });
+        var data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Sync failed');
+        renderRoster(data.roster || []);
+        status.textContent = '\u2713 Loaded ' + (data.roster || []).length + ' players from ' + (data.leagueName || 'league') + '.';
+      } catch (err) {
+        status.textContent = '\u2717 ' + err.message;
+      }
+    });
+
+    function renderRoster(players) {
+      var grid = document.getElementById('grid-nfl');
+      grid.innerHTML = '';
+      if (!players.length) { grid.innerHTML = '<p class="muted">No roster data returned.</p>'; return; }
+      players.forEach(function (p) {
+        var slot = document.createElement('div');
+        slot.className = 'slot' + (p.isStarter ? ' filled' : '');
+        slot.innerHTML = '<span class="slot-pos">' + p.slotType + '</span>' +
+          '<span class="slot-player">' + p.fullName + ' \u00b7 ' + p.position + '</span>';
+        grid.appendChild(slot);
+      });
+    }
+
+    // Live feed (Phase 3)
+    async function loadFeed() {
+      var body = document.getElementById('feedBody');
+      document.getElementById('feedSport').textContent = currentSport.toUpperCase();
+      body.innerHTML = '<tr><td colspan="4" class="muted">Loading feed\u2026</td></tr>';
+      try {
+        var res = await fetch('/api/performers/' + currentSport);
+        var data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Feed failed');
+        body.innerHTML = '';
+        (data.performers || []).forEach(function (p) {
+          var tr = document.createElement('tr');
+          tr.innerHTML = '<td>' + (p.name || '\u2014') + '</td><td>' + (p.stat || '\u2014') + '</td><td>' + (p.team || '\u2014') + '</td><td>' + (p.event || '\u2014') + '</td>';
+          body.appendChild(tr);
+        });
+        if (!body.children.length) body.innerHTML = '<tr><td colspan="4" class="muted">No live games right now.</td></tr>';
+      } catch (err) {
+        body.innerHTML = '<tr><td colspan="4" class="muted">\u2717 ' + err.message + '</td></tr>';
+      }
+    }
+
+    loadFeed();
+  <\/script>
+</body>
+</html>
