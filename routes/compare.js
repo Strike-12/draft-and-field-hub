@@ -5,6 +5,11 @@
  */
 const express = require('express');
 const router = express.Router();
+const {
+  scoreGameLog,
+  scoringLabel,
+  scoringSignature
+} = require('../lib/fantasy-scoring');
 
 const SPORTS = {
   nfl: 'football/nfl',
@@ -78,7 +83,10 @@ async function getPlayerList(sport) {
 function metricKeys(sport, position, names) {
   const nba = [
     'minutes', 'points', 'totalRebounds', 'assists',
-    'steals', 'blocks', 'turnovers'
+    'steals', 'blocks', 'turnovers',
+    'fieldGoalsMade-fieldGoalsAttempted',
+    'threePointFieldGoalsMade-threePointFieldGoalsAttempted',
+    'freeThrowsMade-freeThrowsAttempted'
   ];
   const nflByPosition = {
     QB: ['passingYards', 'passingTouchdowns', 'interceptions', 'rushingYards', 'rushingTouchdowns'],
@@ -95,10 +103,23 @@ function metricKeys(sport, position, names) {
       'defensiveTouchdowns', 'fieldGoalsMade-fieldGoalsAttempted',
       'extraPointsMade-extraPointAttempts'
     ];
-  return keys.filter(key => names.includes(key));
+  const scoringKeys = sport === 'nba'
+    ? ['points', 'fieldGoalsMade-fieldGoalsAttempted', 'threePointFieldGoalsMade-threePointFieldGoalsAttempted', 'freeThrowsMade-freeThrowsAttempted', 'rebounds', 'totalRebounds', 'assists', 'steals', 'blocks', 'turnovers']
+    : [
+      'passingYards', 'passingTouchdowns', 'interceptions', 'fumblesLost',
+      'rushingYards', 'rushingTouchdowns', 'receptions', 'receivingYards',
+      'receivingTouchdowns', 'fieldGoalsMade-fieldGoalAttempts',
+      'fieldGoalsMade1_19-fieldGoalAttempts1_19',
+      'fieldGoalsMade20_29-fieldGoalAttempts20_29',
+      'fieldGoalsMade30_39-fieldGoalAttempts30_39',
+      'fieldGoalsMade40_49-fieldGoalAttempts40_49',
+      'fieldGoalsMade50-fieldGoalAttempts50',
+      'extraPointsMade-extraPointAttempts', 'longFieldGoalMade'
+    ];
+  return [...new Set([...keys, ...scoringKeys])].filter(key => names.includes(key));
 }
 
-async function buildPlayerStats(sport, player) {
+async function buildPlayerStats(sport, player, scoringSettings) {
   const leaguePath = SPORTS[sport];
   const url = `https://site.web.api.espn.com/apis/common/v3/sports/${leaguePath}/athletes/${encodeURIComponent(player.id)}/gamelog?region=us&lang=en-US&contentorigin=espn&isqualified=false`;
   const data = await fetchEspnJson(url);
@@ -107,6 +128,8 @@ async function buildPlayerStats(sport, player) {
   );
   const events = (regularSeason?.categories || []).flatMap(category => category.events || []);
   const keys = metricKeys(sport, player.position, data.names || []);
+  const fantasyScores = events.map(event => scoreGameLog(sport, data.names || [], event.stats || [], scoringSettings, player.position));
+  const validFantasyScores = fantasyScores.filter(Number.isFinite);
   const labels = new Map((data.names || []).map((name, index) => [
     name,
     (data.displayNames || [])[index] || name
@@ -120,6 +143,7 @@ async function buildPlayerStats(sport, player) {
       opponent: details.opponent?.abbreviation || details.opponent?.shortDisplayName || details.opponent?.displayName || '',
       result: details.gameResult || '',
       score: details.score || '',
+      fantasyPoints: scoreGameLog(sport, data.names || [], event.stats || [], scoringSettings, player.position),
       values: keys.map(key => {
         const index = data.names.indexOf(key);
         return { label: labels.get(key), value: event.stats?.[index] ?? '—' };
@@ -144,18 +168,24 @@ async function buildPlayerStats(sport, player) {
   return {
     season: regularSeason?.displayName || '',
     gamesPlayed: games.length,
+    fantasyPointsAverage: validFantasyScores.length
+      ? Number((validFantasyScores.reduce((sum, value) => sum + value, 0) / validFantasyScores.length).toFixed(1))
+      : null,
+    fantasyScoring: scoringLabel(sport, scoringSettings),
+    lastFinalPoints: games[0]?.fantasyPoints ?? null,
+    lastFinalDate: games[0]?.date || '',
     averages,
     recentGames
   };
 }
 
-async function getPlayerStats(sport, player) {
-  const cacheKey = `${sport}:${player.id}`;
+async function getPlayerStats(sport, player, scoringSettings) {
+  const cacheKey = `${sport}:${player.id}:${scoringSignature(sport, scoringSettings)}`;
   const existing = statsCache.get(cacheKey);
   if (existing && existing.expiresAt > Date.now()) return existing.promise;
 
   const entry = { expiresAt: Date.now() + CACHE_TTL_MS };
-  entry.promise = buildPlayerStats(sport, player).catch(error => {
+  entry.promise = buildPlayerStats(sport, player, scoringSettings).catch(error => {
     statsCache.delete(cacheKey);
     throw error;
   });
@@ -179,7 +209,7 @@ router.get('/players/:sport', async (req, res) => {
 });
 
 router.post('/compare', async (req, res) => {
-  const { sport = 'nfl', playerA, playerB } = req.body || {};
+  const { sport = 'nfl', playerA, playerB, scoringSettings } = req.body || {};
   if (!SPORTS[sport]) {
     return res.status(400).json({ error: "sport must be 'nfl' or 'nba'" });
   }
@@ -196,19 +226,32 @@ router.post('/compare', async (req, res) => {
     }
 
     const [statsA, statsB] = await Promise.allSettled([
-      getPlayerStats(sport, a),
-      getPlayerStats(sport, b)
+      getPlayerStats(sport, a, scoringSettings),
+      getPlayerStats(sport, b, scoringSettings)
     ]);
     const statsResult = (result) => result.status === 'fulfilled'
       ? result.value
       : { error: `Recent stats unavailable: ${result.reason.message}` };
 
+    const valueA = statsA.status === 'fulfilled' ? statsA.value.fantasyPointsAverage : null;
+    const valueB = statsB.status === 'fulfilled' ? statsB.value.fantasyPointsAverage : null;
+    const label = scoringLabel(sport, scoringSettings);
+    let verdict = 'Compare the recent games and season averages when choosing your lineup.';
+    if (Number.isFinite(valueA) && Number.isFinite(valueB)) {
+      if (valueA > valueB) verdict = `${a.full_name} is the better fantasy player this season: ${valueA} vs ${valueB} fantasy points per game (${label}).`;
+      else if (valueB > valueA) verdict = `${b.full_name} is the better fantasy player this season: ${valueB} vs ${valueA} fantasy points per game (${label}).`;
+      else verdict = `These players are tied at ${valueA} fantasy points per game (${label}).`;
+    } else if (Number.isFinite(valueA) || Number.isFinite(valueB)) {
+      verdict = `Only one player has a current-season fantasy average available (${label}).`;
+    }
+
     res.json({
       sport,
+      scoringLabel: label,
       comparison: {
         playerA: { fullName: a.full_name, position: a.position, team: a.team, jersey: a.jersey, status: a.status, stats: statsResult(statsA) },
         playerB: { fullName: b.full_name, position: b.position, team: b.team, jersey: b.jersey, status: b.status, stats: statsResult(statsB) },
-        verdict: 'Stats are from ESPN regular-season game logs. Check recent games and current-season averages when setting your lineup.'
+        verdict
       }
     });
   } catch (error) {
@@ -217,3 +260,5 @@ router.post('/compare', async (req, res) => {
 });
 
 module.exports = router;
+module.exports.getPlayerList = getPlayerList;
+module.exports.getPlayerStats = getPlayerStats;
