@@ -83,6 +83,8 @@ body.light .sync-form input, body.light .sync-form textarea, body.light select, 
   border: 1px solid var(--muted); background: var(--midnight);
   color: var(--white); font-size: 0.95rem;
 }
+.consent-row { display: flex; align-items: flex-start; gap: 10px; color: var(--muted); font-size: 0.9rem; line-height: 1.4; }
+.consent-row input { flex: 0 0 18px; width: 18px; height: 18px; min-height: 18px; margin-top: 2px; padding: 0; accent-color: var(--turf); }
 .sync-form textarea { width: 100%; min-height: 84px; resize: vertical; font: inherit; line-height: 1.45; }
 .btn-primary {
   padding: 12px; border: none; border-radius: 8px;

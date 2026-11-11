@@ -1,1 +1,2 @@
 - [App audience and purpose](app-audience-purpose.md) — keep team building, player stats, and recent performance useful without an ESPN sync.
+- [ESPN connection scope](espn-connection-scope.md) — connect public leagues by share link and consent; do not request ESPN passwords or cookie tokens.

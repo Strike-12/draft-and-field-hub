@@ -7,7 +7,6 @@
  */
 const express = require('express');
 const router = express.Router();
-const db = require('../db');
 
 async function mistralAdvise(context, question) {
   const res = await fetch('https://api.mistral.ai/v1/chat/completions', {
@@ -42,12 +41,25 @@ function heuristicAdvise(roster) {
 }
 
 router.post('/assistant/start-sit', async (req, res) => {
-  const { sport = 'nfl', question } = req.body || {};
-  const userId = req.app.get('activeUserId');
-  if (!userId) return res.status(400).json({ error: 'Sync a league first (Phase 2).' });
-
-  const roster = await db.getRoster(userId, sport);
-  if (!roster.length) return res.status(404).json({ error: 'No synced roster for ' + sport + '.' });
+  const { sport = 'nfl', question, roster: submittedRoster } = req.body || {};
+  if (!['nfl', 'nba'].includes(sport)) {
+    return res.status(400).json({ error: "sport must be 'nfl' or 'nba'" });
+  }
+  if (!Array.isArray(submittedRoster) || submittedRoster.length === 0 || submittedRoster.length > 100) {
+    return res.status(400).json({ error: 'Connect a public ESPN league and load your team first.' });
+  }
+  const roster = submittedRoster
+    .filter(player => player && typeof player.fullName === 'string')
+    .map(player => ({
+      full_name: player.fullName.slice(0, 120),
+      position: String(player.position || '—').slice(0, 20),
+      team: String(player.team || '—').slice(0, 20),
+      slot_type: String(player.slotType || 'BENCH').slice(0, 20),
+      is_starter: Boolean(player.isStarter)
+    }));
+  if (!roster.length) {
+    return res.status(400).json({ error: 'The loaded team has no player names to use.' });
+  }
 
   const context = roster.map(p =>
     (p.is_starter ? '[STARTER] ' : '[BENCH] ') + p.full_name + ' — ' + p.position + ' (' + (p.team || '?') + '), slot: ' + p.slot_type
@@ -55,7 +67,8 @@ router.post('/assistant/start-sit', async (req, res) => {
 
   try {
     if (process.env.MISTRAL_API_KEY) {
-      const advice = await mistralAdvise(context, question || 'Who should I start this week?');
+      const safeQuestion = typeof question === 'string' ? question.slice(0, 1000) : '';
+      const advice = await mistralAdvise(context, safeQuestion || 'Who should I start this week?');
       return res.json({ source: 'mistral', advice });
     }
     return res.json({ source: 'heuristic', advice: heuristicAdvise(roster) });
