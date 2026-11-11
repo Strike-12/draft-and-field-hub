@@ -1,53 +1,122 @@
 /**
- * Phase 4 — Quick Compare.
- * GET  /api/players/:sport        — list synced players for dropdowns
- * POST /api/compare               — side-by-side stat comparison
+ * Quick Compare.
+ * Lists every player on current NFL/NBA team rosters from ESPN and compares
+ * roster details without requiring a fantasy league sync.
  */
 const express = require('express');
 const router = express.Router();
-const db = require('../db');
 
-let lastSyncUser = null;
+const SPORTS = {
+  nfl: 'football/nfl',
+  nba: 'basketball/nba'
+};
+const CACHE_TTL_MS = 10 * 60 * 1000;
+const TEAM_FETCH_CONCURRENCY = 8;
+const playerCache = new Map();
 
-router.use((req, res, next) => {
-  // The espn sync route stores the active user id here.
-  if (req.app.get('activeUserId')) lastSyncUser = req.app.get('activeUserId');
-  next();
-});
+async function fetchEspnJson(url) {
+  const response = await fetch(url, { signal: AbortSignal.timeout(15000) });
+  if (!response.ok) throw new Error(`ESPN returned ${response.status}`);
+  return response.json();
+}
+
+function getRosterEntries(roster) {
+  return (roster.athletes || []).flatMap(group =>
+    Array.isArray(group.items) ? group.items : [group]
+  );
+}
+
+async function buildPlayerList(sport) {
+  const leaguePath = SPORTS[sport];
+  const teamData = await fetchEspnJson(
+    `https://site.api.espn.com/apis/site/v2/sports/${leaguePath}/teams?limit=100`
+  );
+  const teams = teamData.sports?.[0]?.leagues?.[0]?.teams
+    ?.map(entry => entry.team)
+    .filter(team => team?.abbreviation && team.isActive !== false);
+
+  if (!teams?.length) throw new Error('ESPN did not return any active teams.');
+
+  const players = [];
+  for (let start = 0; start < teams.length; start += TEAM_FETCH_CONCURRENCY) {
+    const batch = teams.slice(start, start + TEAM_FETCH_CONCURRENCY);
+    const rosters = await Promise.all(batch.map(async team => {
+      const roster = await fetchEspnJson(
+        `https://site.api.espn.com/apis/site/v2/sports/${leaguePath}/teams/${encodeURIComponent(team.abbreviation)}/roster`
+      );
+      return getRosterEntries(roster).map(player => ({
+        id: String(player.id || ''),
+        full_name: player.fullName || player.displayName || '',
+        position: player.position?.abbreviation || '—',
+        team: team.abbreviation,
+        jersey: player.jersey || '',
+        status: player.status?.type || 'active'
+      })).filter(player => player.id && player.full_name);
+    }));
+    players.push(...rosters.flat());
+  }
+
+  const uniquePlayers = [...new Map(players.map(player => [player.id, player])).values()];
+  if (!uniquePlayers.length) throw new Error('ESPN returned no rostered players.');
+  return uniquePlayers.sort((a, b) => a.full_name.localeCompare(b.full_name));
+}
+
+async function getPlayerList(sport) {
+  const existing = playerCache.get(sport);
+  if (existing && existing.expiresAt > Date.now()) return existing.promise;
+
+  const entry = { expiresAt: Date.now() + CACHE_TTL_MS };
+  entry.promise = buildPlayerList(sport).catch(error => {
+    playerCache.delete(sport);
+    throw error;
+  });
+  playerCache.set(sport, entry);
+  return entry.promise;
+}
 
 router.get('/players/:sport', async (req, res) => {
   const sport = (req.params.sport || '').toLowerCase();
-  if (!['nfl', 'nba'].includes(sport)) return res.status(400).json({ error: "sport must be 'nfl' or 'nba'" });
-  const userId = lastSyncUser;
-  if (!userId) return res.json({ players: [], note: 'No league synced yet.' });
-  const roster = await db.getRoster(userId, sport);
-  res.json({ players: roster });
+  if (!SPORTS[sport]) {
+    return res.status(400).json({ error: "sport must be 'nfl' or 'nba'" });
+  }
+
+  try {
+    const players = await getPlayerList(sport);
+    res.set('Cache-Control', 'public, max-age=600');
+    res.json({ sport, players, count: players.length });
+  } catch (error) {
+    res.status(502).json({ error: `Could not load ${sport.toUpperCase()} players: ${error.message}` });
+  }
 });
 
 router.post('/compare', async (req, res) => {
   const { sport = 'nfl', playerA, playerB } = req.body || {};
-  if (!playerA || !playerB) return res.status(400).json({ error: 'playerA and playerB are required.' });
-  const userId = lastSyncUser;
-  if (!userId) return res.status(400).json({ error: 'Sync a league first (Phase 2).' });
+  if (!SPORTS[sport]) {
+    return res.status(400).json({ error: "sport must be 'nfl' or 'nba'" });
+  }
+  if (!playerA || !playerB) {
+    return res.status(400).json({ error: 'playerA and playerB are required.' });
+  }
 
-  const roster = await db.getRoster(userId, sport);
-  const pick = (name) => roster.find(p => p.full_name && p.full_name.toLowerCase().includes(String(name).toLowerCase()));
-  const a = pick(playerA);
-  const b = pick(playerB);
-  if (!a || !b) return res.status(404).json({ error: 'One or both players not found in your synced roster.' });
-
-  res.json({
-    sport,
-    comparison: {
-      playerA: { fullName: a.full_name, position: a.position, team: a.team, slot: a.slot_type, starter: a.is_starter },
-      playerB: { fullName: b.full_name, position: b.position, team: b.team, slot: b.slot_type, starter: b.is_starter },
-      verdict: a.slot_type === b.slot_type
-        ? (a.is_starter && !b.is_starter ? a.full_name + ' is currently starting over ' + b.full_name + '.'
-          : b.is_starter && !a.is_starter ? b.full_name + ' is currently starting over ' + a.full_name + '.'
-          : 'Both are in the same role; check the live feed for recent form.')
-        : 'Different positions — compare via FLEX utility.'
+  try {
+    const players = await getPlayerList(sport);
+    const a = players.find(player => player.id === String(playerA));
+    const b = players.find(player => player.id === String(playerB));
+    if (!a || !b) {
+      return res.status(404).json({ error: 'One or both players were not found on a current team roster.' });
     }
-  });
+
+    res.json({
+      sport,
+      comparison: {
+        playerA: { fullName: a.full_name, position: a.position, team: a.team, jersey: a.jersey, status: a.status },
+        playerB: { fullName: b.full_name, position: b.position, team: b.team, jersey: b.jersey, status: b.status },
+        verdict: 'Current team-roster details shown. Sync your ESPN league to see fantasy lineup roles.'
+      }
+    });
+  } catch (error) {
+    res.status(502).json({ error: `Could not compare ${sport.toUpperCase()} players: ${error.message}` });
+  }
 });
 
 module.exports = router;

@@ -13,6 +13,7 @@
 - Without `MISTRAL_API_KEY`, advice uses the existing heuristic implementation after a roster is synced.
 - `ESPN_SEASON` defaults to `2026`.
 - Never put ESPN cookies or API keys in source control.
+- Quick Compare loads current NFL/NBA team rosters from ESPN, caches them for ten minutes, and works without a fantasy sync. It shows roster details, not player performance statistics; free agents outside team rosters are not included.
 
 ## Import recovery and limitations
 - The imported main branch omitted required files. Restored the dependency manifest and data layer from `p-2`, ESPN/compare routes from `p-4`, feeds from `p-3`, and assistant from `p-5`.

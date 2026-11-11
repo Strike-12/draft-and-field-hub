@@ -68,13 +68,14 @@
     <!-- Quick Compare (Phase 4) -->
     <section class="card compare-card">
       <h2>Quick Compare</h2>
+      <p class="muted">Choose from current NFL or NBA team rosters. Sync an ESPN league to see fantasy lineup roles.</p>
       <div class="compare-grid">
-        <select id="cmpA" aria-label="Player A"></select>
-        <select id="cmpB" aria-label="Player B"></select>
+        <select id="cmpA" aria-label="Player A" disabled><option>Loading players…</option></select>
+        <select id="cmpB" aria-label="Player B" disabled><option>Loading players…</option></select>
       </div>
       <div class="compare-grid">
-        <div class="compare-panel" id="panelA"><p class="muted">Sync a league to compare players.</p></div>
-        <div class="compare-panel" id="panelB"><p class="muted">Sync a league to compare players.</p></div>
+        <div class="compare-panel" id="panelA"><p class="muted">Player details will appear here.</p></div>
+        <div class="compare-panel" id="panelB"><p class="muted">Player details will appear here.</p></div>
       </div>
       <p id="compareVerdict" class="sync-status"></p>
     </section>
@@ -202,22 +203,39 @@
 
     // Quick Compare (Phase 4)
     async function loadCompareOptions() {
+      var selectors = ['cmpA', 'cmpB'].map(function (id) { return document.getElementById(id); });
+      selectors.forEach(function (select) {
+        select.disabled = true;
+        select.innerHTML = '<option>Loading players\u2026</option>';
+      });
       try {
         var res = await fetch('/api/players/' + currentSport);
         var data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Could not load players');
         var players = data.players || [];
-        ['cmpA', 'cmpB'].forEach(function (id, idx) {
-          var sel = document.getElementById(id);
+        selectors.forEach(function (sel, idx) {
           sel.innerHTML = '';
           players.forEach(function (p) {
             var o = document.createElement('option');
-            o.value = p.full_name; o.textContent = p.full_name + ' (' + p.position + ')';
+            o.value = p.id;
+            o.textContent = p.full_name + ' (' + p.position + ', ' + p.team + ')';
             sel.appendChild(o);
           });
-          sel.value = players[idx] ? players[idx].full_name : '';
+          if (players[idx]) sel.value = players[idx].id;
+          sel.disabled = players.length < 2;
         });
-        if (players.length) runCompare();
-      } catch (e) { /* not synced yet */ }
+        if (players.length >= 2) {
+          runCompare();
+        } else {
+          document.getElementById('compareVerdict').textContent = 'ESPN did not return enough players to compare.';
+        }
+      } catch (e) {
+        selectors.forEach(function (select) {
+          select.innerHTML = '<option>Players unavailable</option>';
+          select.disabled = true;
+        });
+        document.getElementById('compareVerdict').textContent = '\u2717 ' + e.message;
+      }
     }
 
     async function runCompare() {
@@ -241,12 +259,23 @@
     function renderComparePanels(c) {
       [['panelA', c.playerA], ['panelB', c.playerB]].forEach(function (pair) {
         var p = pair[1];
-        document.getElementById(pair[0]).innerHTML =
-          '<h3>' + p.fullName + '</h3><ul>' +
-          '<li>Position <span>' + p.position + '</span></li>' +
-          '<li>Team <span>' + p.team + '</span></li>' +
-          '<li>Slot <span>' + p.slot + '</span></li>' +
-          '<li>Starter <span>' + (p.starter ? 'Yes' : 'No') + '</span></li></ul>';
+        var panel = document.getElementById(pair[0]);
+        panel.innerHTML = '';
+        var title = document.createElement('h3');
+        title.textContent = p.fullName;
+        var list = document.createElement('ul');
+        [['Position', p.position], ['Team', p.team], ['Jersey', p.jersey || '—'], ['Roster status', p.status || '—']].forEach(function (row) {
+          var item = document.createElement('li');
+          var label = document.createElement('span');
+          label.textContent = row[0];
+          var value = document.createElement('span');
+          value.textContent = row[1];
+          item.appendChild(label);
+          item.appendChild(value);
+          list.appendChild(item);
+        });
+        panel.appendChild(title);
+        panel.appendChild(list);
       });
       document.getElementById('compareVerdict').textContent = c.verdict;
     }
