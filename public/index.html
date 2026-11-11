@@ -8,24 +8,20 @@
 </head>
 <body>
   <header class="topbar">
-    <div class="brand">
-      <span class="logo">&#127944;</span>
-      <h1>Draft &amp; Field Hub</h1>
-    </div>
+    <div class="brand"><span class="logo">&#127944;</span><h1>Draft &amp; Field Hub</h1></div>
     <button id="themeToggle" class="theme-toggle" aria-label="Toggle dark/light mode" title="Toggle dark/light mode">&#9789;</button>
   </header>
 
   <main class="app">
-    <!-- Sport Switcher -->
     <nav class="sport-switcher" role="tablist">
       <button class="sport-tab active" data-sport="nfl" role="tab">NFL</button>
       <button class="sport-tab" data-sport="nba" role="tab">NBA</button>
     </nav>
 
-    <!-- ESPN Sync (Phase 2 implemented) -->
+    <!-- ESPN Sync (Phase 2) -->
     <section class="card sync-card">
       <h2>ESPN League Sync</h2>
-      <p class="muted">Enter your ESPN Fantasy league credentials to sync your roster instantly.</p>
+      <p class="muted">1-tap sync: enter your League ID, SWID and espn_s2 tokens to load rosters instantly.</p>
       <form id="espnSyncForm" class="sync-form">
         <input type="text" id="leagueId" placeholder="ESPN League ID" aria-label="ESPN League ID" />
         <input type="password" id="swid" placeholder="SWID token" aria-label="SWID token" />
@@ -38,34 +34,13 @@
     <!-- NFL Lineup -->
     <section class="card lineup-card" id="lineup-nfl">
       <h2>NFL Starting Lineup <span class="badge">8 Slots</span></h2>
-      <div class="lineup-grid">
-        <div class="slot" data-slot="QB"><span class="slot-pos">QB</span><span class="slot-player">Empty</span></div>
-        <div class="slot" data-slot="RB"><span class="slot-pos">RB</span><span class="slot-player">Empty</span></div>
-        <div class="slot" data-slot="RB"><span class="slot-pos">RB</span><span class="slot-player">Empty</span></div>
-        <div class="slot" data-slot="WR"><span class="slot-pos">WR</span><span class="slot-player">Empty</span></div>
-        <div class="slot" data-slot="WR"><span class="slot-pos">WR</span><span class="slot-player">Empty</span></div>
-        <div class="slot" data-slot="TE"><span class="slot-pos">TE</span><span class="slot-player">Empty</span></div>
-        <div class="slot" data-slot="FLEX"><span class="slot-pos">FLEX</span><span class="slot-player">Empty</span></div>
-        <div class="slot" data-slot="D/ST"><span class="slot-pos">D/ST</span><span class="slot-player">Empty</span></div>
-        <div class="slot" data-slot="K"><span class="slot-pos">K</span><span class="slot-player">Empty</span></div>
-      </div>
+      <div class="lineup-grid" id="grid-nfl"></div>
     </section>
 
     <!-- NBA Lineup -->
     <section class="card lineup-card hidden" id="lineup-nba">
       <h2>NBA Starting Lineup <span class="badge">10 Slots</span></h2>
-      <div class="lineup-grid">
-        <div class="slot" data-slot="PG"><span class="slot-pos">PG</span><span class="slot-player">Empty</span></div>
-        <div class="slot" data-slot="SG"><span class="slot-pos">SG</span><span class="slot-player">Empty</span></div>
-        <div class="slot" data-slot="SF"><span class="slot-pos">SF</span><span class="slot-player">Empty</span></div>
-        <div class="slot" data-slot="PF"><span class="slot-pos">PF</span><span class="slot-player">Empty</span></div>
-        <div class="slot" data-slot="C"><span class="slot-pos">C</span><span class="slot-player">Empty</span></div>
-        <div class="slot" data-slot="G"><span class="slot-pos">G</span><span class="slot-player">Empty</span></div>
-        <div class="slot" data-slot="F"><span class="slot-pos">F</span><span class="slot-player">Empty</span></div>
-        <div class="slot" data-slot="UTIL"><span class="slot-pos">UTIL</span><span class="slot-player">Empty</span></div>
-        <div class="slot" data-slot="UTIL"><span class="slot-pos">UTIL</span><span class="slot-player">Empty</span></div>
-        <div class="slot" data-slot="UTIL"><span class="slot-pos">UTIL</span><span class="slot-player">Empty</span></div>
-      </div>
+      <div class="lineup-grid" id="grid-nba"></div>
     </section>
 
     <!-- Live Feed (Phase 3 placeholder) -->
@@ -81,10 +56,68 @@
     </section>
   </main>
 
-  <footer class="footer">
-    <p>Draft &amp; Field Hub &mdash; Turf &amp; Midnight</p>
-  </footer>
+  <footer class="footer"><p>Draft &amp; Field Hub &mdash; Turf &amp; Midnight</p></footer>
 
-  <script src="js/app.js"></script>
+  <script>
+    // Sport switcher
+    document.querySelectorAll('.sport-tab').forEach(function (tab) {
+      tab.addEventListener('click', function () {
+        document.querySelectorAll('.sport-tab').forEach(function (t) { t.classList.remove('active'); });
+        tab.classList.add('active');
+        var sport = tab.dataset.sport;
+        document.getElementById('lineup-nfl').classList.toggle('hidden', sport !== 'nfl');
+        document.getElementById('lineup-nba').classList.toggle('hidden', sport !== 'nba');
+      });
+    });
+
+    // Dark/Light mode toggle (persisted)
+    var themeToggle = document.getElementById('themeToggle');
+    if (localStorage.getItem('theme') === 'light') { document.body.classList.add('light'); themeToggle.textContent = '\u2600'; }
+    themeToggle.addEventListener('click', function () {
+      var isLight = document.body.classList.toggle('light');
+      themeToggle.textContent = isLight ? '\u2600' : '\u263D';
+      localStorage.setItem('theme', isLight ? 'light' : 'dark');
+    });
+
+    // ESPN sync (Phase 2)
+    document.getElementById('espnSyncForm').addEventListener('submit', async function (e) {
+      e.preventDefault();
+      var status = document.getElementById('syncStatus');
+      status.textContent = 'Syncing with ESPN\u2026';
+      try {
+        var res = await fetch('/api/sync/espn', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            leagueId: document.getElementById('leagueId').value.trim(),
+            swid: document.getElementById('swid').value.trim(),
+            espnS2: document.getElementById('espnS2').value.trim()
+          })
+        });
+        var data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Sync failed');
+        renderRoster(data.roster || []);
+        status.textContent = '\u2713 Loaded ' + (data.roster || []).length + ' players from ' + (data.leagueName || 'league') + '.';
+      } catch (err) {
+        status.textContent = '\u2717 ' + err.message;
+      }
+    });
+
+    function renderRoster(players) {
+      var grid = document.getElementById('grid-nfl');
+      grid.innerHTML = '';
+      if (!players.length) {
+        grid.innerHTML = '<p class="muted">No roster data returned.</p>';
+        return;
+      }
+      players.forEach(function (p) {
+        var slot = document.createElement('div');
+        slot.className = 'slot' + (p.isStarter ? ' filled' : '');
+        slot.innerHTML = '<span class="slot-pos">' + p.slotType + '</span>' +
+          '<span class="slot-player">' + p.fullName + ' \u00b7 ' + p.position + '</span>';
+        grid.appendChild(slot);
+      });
+    }
+  <\/script>
 </body>
 </html>
