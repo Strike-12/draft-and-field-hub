@@ -7,13 +7,16 @@
 - No build step or required secrets are needed for the default development mode.
 - Dependencies are recorded in `package.json` and `package-lock.json`.
 
+## Product purpose
+- Draft & Field Hub is for people who want to build a fantasy team in the app, check player stats, and see recent performance. Connecting an existing ESPN league is optional.
+
 ## Optional services
 - Without `DATABASE_URL`, the original in-memory store is used. Stored rosters disappear when the process restarts.
 - PostgreSQL is optional. Its original schema is in `db/schema.sql`; the schema still needs a unique constraint on `(sport, api_player_id)` before its player upsert can work. Database provisioning and schema changes were not part of the import setup.
 - Without `MISTRAL_API_KEY`, advice uses the existing heuristic implementation after a roster is synced.
 - `ESPN_SEASON` defaults to `2026`.
 - Never put ESPN cookies or API keys in source control.
-- Quick Compare loads current NFL/NBA team rosters from ESPN, caches them for ten minutes, and works without a fantasy sync. It shows roster details, not player performance statistics; free agents outside team rosters are not included.
+- Quick Compare loads current NFL/NBA team rosters and regular-season game logs from ESPN, caches responses for ten minutes, and works without a fantasy sync. Search filters the full roster, while each dropdown renders at most 100 matches at once for responsiveness. Free agents outside team rosters are not included.
 
 ## Import recovery and limitations
 - The imported main branch omitted required files. Restored the dependency manifest and data layer from `p-2`, ESPN/compare routes from `p-4`, feeds from `p-3`, and assistant from `p-5`.

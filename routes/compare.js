@@ -13,6 +13,7 @@ const SPORTS = {
 const CACHE_TTL_MS = 10 * 60 * 1000;
 const TEAM_FETCH_CONCURRENCY = 8;
 const playerCache = new Map();
+const statsCache = new Map();
 
 async function fetchEspnJson(url) {
   const response = await fetch(url, { signal: AbortSignal.timeout(15000) });
@@ -74,6 +75,94 @@ async function getPlayerList(sport) {
   return entry.promise;
 }
 
+function metricKeys(sport, position, names) {
+  const nba = [
+    'minutes', 'points', 'totalRebounds', 'assists',
+    'steals', 'blocks', 'turnovers'
+  ];
+  const nflByPosition = {
+    QB: ['passingYards', 'passingTouchdowns', 'interceptions', 'rushingYards', 'rushingTouchdowns'],
+    RB: ['rushingAttempts', 'rushingYards', 'rushingTouchdowns', 'receptions', 'receivingYards', 'receivingTouchdowns'],
+    FB: ['rushingAttempts', 'rushingYards', 'rushingTouchdowns', 'receptions', 'receivingYards'],
+    WR: ['receptions', 'receivingTargets', 'receivingYards', 'receivingTouchdowns', 'rushingYards'],
+    TE: ['receptions', 'receivingTargets', 'receivingYards', 'receivingTouchdowns', 'rushingYards'],
+    K: ['fieldGoalsMade-fieldGoalsAttempted', 'extraPointsMade-extraPointAttempts']
+  };
+  const keys = sport === 'nba'
+    ? nba
+    : nflByPosition[position] || [
+      'totalTackles', 'sacks', 'interceptions', 'fumblesRecovered',
+      'defensiveTouchdowns', 'fieldGoalsMade-fieldGoalsAttempted',
+      'extraPointsMade-extraPointAttempts'
+    ];
+  return keys.filter(key => names.includes(key));
+}
+
+async function buildPlayerStats(sport, player) {
+  const leaguePath = SPORTS[sport];
+  const url = `https://site.web.api.espn.com/apis/common/v3/sports/${leaguePath}/athletes/${encodeURIComponent(player.id)}/gamelog?region=us&lang=en-US&contentorigin=espn&isqualified=false`;
+  const data = await fetchEspnJson(url);
+  const regularSeason = (data.seasonTypes || []).find(season =>
+    season.displayName?.includes('Regular Season')
+  );
+  const events = (regularSeason?.categories || []).flatMap(category => category.events || []);
+  const keys = metricKeys(sport, player.position, data.names || []);
+  const labels = new Map((data.names || []).map((name, index) => [
+    name,
+    (data.displayNames || [])[index] || name
+  ]));
+
+  const games = events.map(event => {
+    const details = data.events?.[event.eventId] || {};
+    return {
+      date: details.gameDate || '',
+      atVs: details.atVs || '',
+      opponent: details.opponent?.abbreviation || details.opponent?.shortDisplayName || details.opponent?.displayName || '',
+      result: details.gameResult || '',
+      score: details.score || '',
+      values: keys.map(key => {
+        const index = data.names.indexOf(key);
+        return { label: labels.get(key), value: event.stats?.[index] ?? '—' };
+      })
+    };
+  }).filter(game => game.values.length);
+
+  const recentGames = games.slice(0, 5);
+  const averages = keys.map(key => {
+    const index = data.names.indexOf(key);
+    const values = events.map(event => event.stats?.[index])
+      .filter(value => value !== undefined && value !== null && value !== '' && value !== '-')
+      .map(Number)
+      .filter(Number.isFinite);
+    if (!values.length) return null;
+    return {
+      label: labels.get(key),
+      value: (values.reduce((sum, value) => sum + value, 0) / values.length).toFixed(1)
+    };
+  }).filter(Boolean);
+
+  return {
+    season: regularSeason?.displayName || '',
+    gamesPlayed: games.length,
+    averages,
+    recentGames
+  };
+}
+
+async function getPlayerStats(sport, player) {
+  const cacheKey = `${sport}:${player.id}`;
+  const existing = statsCache.get(cacheKey);
+  if (existing && existing.expiresAt > Date.now()) return existing.promise;
+
+  const entry = { expiresAt: Date.now() + CACHE_TTL_MS };
+  entry.promise = buildPlayerStats(sport, player).catch(error => {
+    statsCache.delete(cacheKey);
+    throw error;
+  });
+  statsCache.set(cacheKey, entry);
+  return entry.promise;
+}
+
 router.get('/players/:sport', async (req, res) => {
   const sport = (req.params.sport || '').toLowerCase();
   if (!SPORTS[sport]) {
@@ -106,12 +195,20 @@ router.post('/compare', async (req, res) => {
       return res.status(404).json({ error: 'One or both players were not found on a current team roster.' });
     }
 
+    const [statsA, statsB] = await Promise.allSettled([
+      getPlayerStats(sport, a),
+      getPlayerStats(sport, b)
+    ]);
+    const statsResult = (result) => result.status === 'fulfilled'
+      ? result.value
+      : { error: `Recent stats unavailable: ${result.reason.message}` };
+
     res.json({
       sport,
       comparison: {
-        playerA: { fullName: a.full_name, position: a.position, team: a.team, jersey: a.jersey, status: a.status },
-        playerB: { fullName: b.full_name, position: b.position, team: b.team, jersey: b.jersey, status: b.status },
-        verdict: 'Current team-roster details shown. Sync your ESPN league to see fantasy lineup roles.'
+        playerA: { fullName: a.full_name, position: a.position, team: a.team, jersey: a.jersey, status: a.status, stats: statsResult(statsA) },
+        playerB: { fullName: b.full_name, position: b.position, team: b.team, jersey: b.jersey, status: b.status, stats: statsResult(statsB) },
+        verdict: 'Stats are from ESPN regular-season game logs. Check recent games and current-season averages when setting your lineup.'
       }
     });
   } catch (error) {

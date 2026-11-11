@@ -1,0 +1,1 @@
+- [App audience and purpose](app-audience-purpose.md) — keep team building, player stats, and recent performance useful without an ESPN sync.

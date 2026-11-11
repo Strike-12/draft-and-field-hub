@@ -68,10 +68,20 @@
     <!-- Quick Compare (Phase 4) -->
     <section class="card compare-card">
       <h2>Quick Compare</h2>
-      <p class="muted">Choose from current NFL or NBA team rosters. Sync an ESPN league to see fantasy lineup roles.</p>
-      <div class="compare-grid">
-        <select id="cmpA" aria-label="Player A" disabled><option>Loading players…</option></select>
-        <select id="cmpB" aria-label="Player B" disabled><option>Loading players…</option></select>
+      <p class="muted">Search current NFL or NBA rosters to compare season averages and recent games. Build My Team also works without an ESPN league.</p>
+      <div class="compare-grid compare-picker-grid">
+        <div class="compare-picker">
+          <label for="searchA">Player A</label>
+          <input id="searchA" type="search" autocomplete="off" placeholder="Search name, position, or team" disabled />
+          <p class="player-search-hint muted" id="searchHintA" aria-live="polite">Loading players…</p>
+          <select id="cmpA" aria-label="Choose player A" disabled><option>Loading players…</option></select>
+        </div>
+        <div class="compare-picker">
+          <label for="searchB">Player B</label>
+          <input id="searchB" type="search" autocomplete="off" placeholder="Search name, position, or team" disabled />
+          <p class="player-search-hint muted" id="searchHintB" aria-live="polite">Loading players…</p>
+          <select id="cmpB" aria-label="Choose player B" disabled><option>Loading players…</option></select>
+        </div>
       </div>
       <div class="compare-grid">
         <div class="compare-panel" id="panelA"><p class="muted">Player details will appear here.</p></div>
@@ -85,7 +95,7 @@
       <h2>AI Start/Sit Assistant <span class="badge">PHASE 5</span></h2>
       <p class="muted">Get lineup recommendations based on your synced roster.</p>
       <form id="assistantForm" class="sync-form">
-        <input type="text" id="assistantQuestion" placeholder="e.g. Should I start Barkley or Jacobs this week?" />
+        <textarea id="assistantQuestion" rows="3" placeholder="Ask about your lineup, e.g. Should I start Barkley or Jacobs?"></textarea>
         <button type="submit" class="btn-primary">Get Advice</button>
       </form>
       <div id="assistantAdvice" class="compare-panel advice-panel" style="margin-top:12px">
@@ -98,6 +108,9 @@
 
   <script>
     var currentSport = 'nfl';
+    var comparePlayers = [];
+    var compareRequestVersion = 0;
+    var compareSearchTimer;
 
     // Sport switcher
     document.querySelectorAll('.sport-tab').forEach(function (tab) {
@@ -201,35 +214,31 @@
       }
     }
 
-    // Quick Compare (Phase 4)
+    // Quick Compare
     async function loadCompareOptions() {
+      var requestedSport = currentSport;
       var selectors = ['cmpA', 'cmpB'].map(function (id) { return document.getElementById(id); });
+      ['searchA', 'searchB'].forEach(function (id) { document.getElementById(id).disabled = true; });
       selectors.forEach(function (select) {
         select.disabled = true;
         select.innerHTML = '<option>Loading players\u2026</option>';
       });
       try {
-        var res = await fetch('/api/players/' + currentSport);
+        var res = await fetch('/api/players/' + requestedSport);
         var data = await res.json();
         if (!res.ok) throw new Error(data.error || 'Could not load players');
-        var players = data.players || [];
-        selectors.forEach(function (sel, idx) {
-          sel.innerHTML = '';
-          players.forEach(function (p) {
-            var o = document.createElement('option');
-            o.value = p.id;
-            o.textContent = p.full_name + ' (' + p.position + ', ' + p.team + ')';
-            sel.appendChild(o);
-          });
-          if (players[idx]) sel.value = players[idx].id;
-          sel.disabled = players.length < 2;
-        });
-        if (players.length >= 2) {
+        if (currentSport !== requestedSport) return;
+        comparePlayers = data.players || [];
+        ['searchA', 'searchB'].forEach(function (id) { document.getElementById(id).disabled = false; });
+        populateCompareSelect('A', 0);
+        populateCompareSelect('B', 1);
+        if (comparePlayers.length >= 2) {
           runCompare();
         } else {
           document.getElementById('compareVerdict').textContent = 'ESPN did not return enough players to compare.';
         }
       } catch (e) {
+        if (currentSport !== requestedSport) return;
         selectors.forEach(function (select) {
           select.innerHTML = '<option>Players unavailable</option>';
           select.disabled = true;
@@ -238,50 +247,181 @@
       }
     }
 
+    function populateCompareSelect(side, initialIndex) {
+      var search = document.getElementById(side === 'A' ? 'searchA' : 'searchB');
+      var select = document.getElementById(side === 'A' ? 'cmpA' : 'cmpB');
+      var query = search.value.trim().toLowerCase();
+      var previousValue = select.value;
+      var matches = comparePlayers.filter(function (player) {
+        return (player.full_name + ' ' + player.position + ' ' + player.team).toLowerCase().includes(query);
+      });
+      var visibleMatches = matches.slice(0, 100);
+      select.innerHTML = '';
+      visibleMatches.forEach(function (player) {
+        var option = document.createElement('option');
+        option.value = player.id;
+        option.textContent = player.full_name + ' (' + player.position + ', ' + player.team + ')';
+        select.appendChild(option);
+      });
+      select.disabled = visibleMatches.length === 0;
+      var hint = document.getElementById(side === 'A' ? 'searchHintA' : 'searchHintB');
+      hint.textContent = matches.length > visibleMatches.length
+        ? 'Showing 100 matches. Add more letters to narrow the search.'
+        : matches.length + ' player' + (matches.length === 1 ? '' : 's') + ' found.';
+      if (!visibleMatches.length) {
+        var emptyOption = document.createElement('option');
+        emptyOption.textContent = 'No matching players';
+        select.appendChild(emptyOption);
+        return;
+      }
+      var priorMatch = visibleMatches.some(function (player) { return player.id === previousValue; });
+      select.value = priorMatch ? previousValue : visibleMatches[Math.min(initialIndex, visibleMatches.length - 1)].id;
+    }
+
     async function runCompare() {
       var a = document.getElementById('cmpA').value;
       var b = document.getElementById('cmpB').value;
-      if (!a || !b) return;
+      if (!a || !b) {
+        document.getElementById('compareVerdict').textContent = 'Choose two players to compare.';
+        ['panelA', 'panelB'].forEach(function (id) {
+          document.getElementById(id).innerHTML = '<p class="muted">Choose a player to compare.</p>';
+        });
+        return;
+      }
+      var requestVersion = ++compareRequestVersion;
+      var requestedSport = currentSport;
+      document.getElementById('compareVerdict').textContent = 'Loading current-season and recent stats\u2026';
       try {
         var res = await fetch('/api/compare', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ sport: currentSport, playerA: a, playerB: b })
+          body: JSON.stringify({ sport: requestedSport, playerA: a, playerB: b })
         });
         var data = await res.json();
         if (!res.ok) throw new Error(data.error || 'Compare failed');
+        if (requestVersion !== compareRequestVersion || requestedSport !== currentSport) return;
         renderComparePanels(data.comparison);
       } catch (err) {
+        if (requestVersion !== compareRequestVersion || requestedSport !== currentSport) return;
         document.getElementById('compareVerdict').textContent = '\u2717 ' + err.message;
       }
     }
 
-    function renderComparePanels(c) {
-      [['panelA', c.playerA], ['panelB', c.playerB]].forEach(function (pair) {
-        var p = pair[1];
-        var panel = document.getElementById(pair[0]);
-        panel.innerHTML = '';
-        var title = document.createElement('h3');
-        title.textContent = p.fullName;
-        var list = document.createElement('ul');
-        [['Position', p.position], ['Team', p.team], ['Jersey', p.jersey || '—'], ['Roster status', p.status || '—']].forEach(function (row) {
-          var item = document.createElement('li');
+    function renderPlayerStats(panel, stats) {
+      var section = document.createElement('section');
+      section.className = 'compare-stats';
+      var heading = document.createElement('h4');
+      heading.textContent = 'Season averages';
+      section.appendChild(heading);
+
+      if (stats.error) {
+        var error = document.createElement('p');
+        error.className = 'muted';
+        error.textContent = stats.error;
+        section.appendChild(error);
+        panel.appendChild(section);
+        return;
+      }
+
+      var season = document.createElement('p');
+      season.className = 'muted stats-season';
+      season.textContent = (stats.season || 'Current season') + ' \u00b7 ' + stats.gamesPlayed + ' games';
+      section.appendChild(season);
+      if (stats.averages.length) {
+        var metrics = document.createElement('div');
+        metrics.className = 'stats-metrics';
+        stats.averages.forEach(function (metric) {
+          var item = document.createElement('div');
+          item.className = 'stats-metric';
           var label = document.createElement('span');
-          label.textContent = row[0];
-          var value = document.createElement('span');
-          value.textContent = row[1];
+          label.textContent = metric.label;
+          var value = document.createElement('strong');
+          value.textContent = metric.value;
           item.appendChild(label);
           item.appendChild(value);
-          list.appendChild(item);
+          metrics.appendChild(item);
         });
-        panel.appendChild(title);
-        panel.appendChild(list);
+        section.appendChild(metrics);
+      } else {
+        var noAverages = document.createElement('p');
+        noAverages.className = 'muted';
+        noAverages.textContent = 'No regular-season games recorded yet.';
+        section.appendChild(noAverages);
+      }
+
+      var recentHeading = document.createElement('h4');
+      recentHeading.className = 'recent-heading';
+      recentHeading.textContent = 'Recent games';
+      section.appendChild(recentHeading);
+      if (!stats.recentGames.length) {
+        var noGames = document.createElement('p');
+        noGames.className = 'muted';
+        noGames.textContent = 'No recent regular-season games.';
+        section.appendChild(noGames);
+      } else {
+        var recentList = document.createElement('ul');
+        recentList.className = 'recent-games';
+        stats.recentGames.forEach(function (game) {
+          var item = document.createElement('li');
+          var gameTitle = document.createElement('strong');
+          var gameDate = game.date ? new Date(game.date) : null;
+          var dateLabel = gameDate && !Number.isNaN(gameDate.getTime())
+            ? gameDate.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+            : 'Recent';
+          gameTitle.textContent = dateLabel + (game.opponent ? ' \u00b7 ' + game.atVs + ' ' + game.opponent : '');
+          var gameStats = document.createElement('span');
+          gameStats.textContent = game.values.map(function (metric) { return metric.label + ' ' + metric.value; }).join(' \u00b7 ');
+          item.appendChild(gameTitle);
+          item.appendChild(gameStats);
+          recentList.appendChild(item);
+        });
+        section.appendChild(recentList);
+      }
+      panel.appendChild(section);
+    }
+
+    function populatePlayerDetails(panel, player) {
+      var title = document.createElement('h3');
+      title.textContent = player.fullName;
+      var list = document.createElement('ul');
+      [['Position', player.position], ['Team', player.team], ['Jersey', player.jersey || '—'], ['Roster status', player.status || '—']].forEach(function (row) {
+        var item = document.createElement('li');
+        var label = document.createElement('span');
+        label.textContent = row[0];
+        var value = document.createElement('span');
+        value.textContent = row[1];
+        item.appendChild(label);
+        item.appendChild(value);
+        list.appendChild(item);
       });
-      document.getElementById('compareVerdict').textContent = c.verdict;
+      panel.appendChild(title);
+      panel.appendChild(list);
+      renderPlayerStats(panel, player.stats);
+    }
+
+    function renderComparePanels(comparison) {
+      [['panelA', comparison.playerA], ['panelB', comparison.playerB]].forEach(function (pair) {
+        var panel = document.getElementById(pair[0]);
+        panel.innerHTML = '';
+        populatePlayerDetails(panel, pair[1]);
+      });
+      document.getElementById('compareVerdict').textContent = comparison.verdict;
     }
 
     document.getElementById('cmpA').addEventListener('change', runCompare);
     document.getElementById('cmpB').addEventListener('change', runCompare);
+    document.getElementById('searchA').addEventListener('input', function () {
+      compareRequestVersion++;
+      populateCompareSelect('A', 0);
+      clearTimeout(compareSearchTimer);
+      compareSearchTimer = setTimeout(runCompare, 250);
+    });
+    document.getElementById('searchB').addEventListener('input', function () {
+      compareRequestVersion++;
+      populateCompareSelect('B', 1);
+      clearTimeout(compareSearchTimer);
+      compareSearchTimer = setTimeout(runCompare, 250);
+    });
 
     // AI Assistant (Phase 5)
     document.getElementById('assistantForm').addEventListener('submit', async function (e) {
