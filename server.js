@@ -1,0 +1,31 @@
+/**
+ * Draft & Field Hub — Express server
+ * Phase 1: static frontend + health check
+ * Phase 2: ESPN Fantasy sync (POST /api/sync/espn)
+ * Phase 3: live top performers feed (GET /api/performers/:sport)
+ * Phase 4: quick compare (GET /api/players/:sport, POST /api/compare)
+ * Phase 5: AI start/sit assistant (POST /api/assistant/start-sit)
+ * Phase 6: Build My Team (GET /api/projections/:sport, POST /api/sync/espn/auto)
+ */
+const express = require('express');
+const path = require('path');
+
+const app = express();
+const PORT = process.env.PORT || 3000;
+
+app.use(express.json());
+app.use(express.static(path.join(__dirname, 'public')));
+
+app.get('/api/health', (req, res) => {
+  res.json({ status: 'ok', app: 'Draft & Field Hub', phase: 6 });
+});
+
+app.use('/api', require('./routes/espn'));
+app.use('/api', require('./routes/feeds'));
+app.use('/api', require('./routes/compare'));
+app.use('/api', require('./routes/assistant'));
+app.use('/api', require('./routes/buildteam'));
+
+app.listen(PORT, () => {
+  console.log(`Draft & Field Hub listening on http://localhost:${PORT}`);
+});
