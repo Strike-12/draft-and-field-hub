@@ -384,7 +384,7 @@
       document.getElementById('projSport').textContent = sport.toUpperCase();
     }
 
-    function saveGeneratedTeam(sport, data, teamName) {
+    async function saveGeneratedTeam(sport, data, teamName) {
       var players = (data.projectedTeam || []).map(function (entry) {
         var player = entry.player || (entry.id ? entry : null);
         return player ? Object.assign({}, player, {
@@ -396,7 +396,7 @@
       var projectedTotal = players.reduce(function (sum, player) {
         return sum + (Number.isFinite(player.projectedPoints) ? player.projectedPoints : 0);
       }, 0);
-      saveTeamRecord({
+      return saveTeamRecord({
         sport: sport,
         name: teamName,
         source: 'generated',
@@ -438,7 +438,7 @@
         var teamName = sportAtRequest.toUpperCase() + ' Build ' + (autoBuildCount[sportAtRequest] + 1);
         autoBuildCount[sportAtRequest]++;
         renderGeneratedTeam(data, sportAtRequest, teamName);
-        saveGeneratedTeam(sportAtRequest, data, teamName);
+        await saveGeneratedTeam(sportAtRequest, data, teamName);
         buildButton.textContent = 'Build Another Team';
       } catch (e) {
         grid.innerHTML = '';

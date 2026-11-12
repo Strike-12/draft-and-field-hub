@@ -3,7 +3,7 @@ name: Fantasy scoring and auto-built teams
 description: Product rules for no-sync fantasy teams, scoring, projections, and game results.
 ---
 
-Build My Team should create an automatic NFL or NBA lineup without requiring ESPN sync. If a public ESPN league is connected, use its scoring settings; otherwise use ESPN's common defaults: NFL PPR and ESPN's default NBA points scoring. Show current-season fantasy points per game as a projection estimate and the latest completed game's fantasy points as the final result.
+Build My Team should create an automatic NFL or NBA lineup without requiring ESPN sync. If a public ESPN league is connected, use its scoring settings; otherwise use ESPN's common defaults: NFL PPR and ESPN's default NBA points scoring. Estimate points from current-season and recent fantasy averages, keep the latest completed game's result separate, and make a repeated build produce an alternative lineup when possible.
 
 After a user loads their ESPN roster, automatically recommend the best lineup from that roster using its available fantasy-point averages, and let them rebuild it from the connected team. Do not substitute a generic league-wide lineup for their team.
 

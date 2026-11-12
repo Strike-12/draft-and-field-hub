@@ -94,6 +94,9 @@ router.post('/my-teams', requireSignedIn, async (req, res) => {
     let providerKey;
     let leagueInfo = null;
     if (source === 'espn') {
+      if (typeof input.leagueUrl !== 'string' || typeof input.teamId !== 'string') {
+        return res.status(400).json({ error: 'The ESPN team details are invalid.' });
+      }
       const league = parsePublicLeagueUrl(input.leagueUrl);
       const teamId = String(input.teamId || '');
       if (league.sport !== sport || !/^\d{1,12}$/.test(teamId)) {
@@ -133,7 +136,9 @@ router.post('/my-teams', requireSignedIn, async (req, res) => {
 
 router.delete('/my-teams/:id', requireSignedIn, async (req, res) => {
   const id = String(req.params.id || '');
-  if (!/^[0-9a-f-]{36}$/i.test(id)) return res.status(400).json({ error: 'Invalid saved team.' });
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id)) {
+    return res.status(400).json({ error: 'Invalid saved team.' });
+  }
   try {
     const deleted = await deleteSavedTeam(req.clerkUserId, id);
     if (!deleted) return res.status(404).json({ error: 'Saved team was not found.' });
