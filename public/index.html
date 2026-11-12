@@ -110,8 +110,8 @@
 
     <!-- AI Start/Sit Assistant (Phase 5) -->
     <section class="card assistant-card">
-      <h2>AI Start/Sit Assistant <span class="badge">PHASE 5</span></h2>
-      <p class="muted">Load your team from a public ESPN league to get lineup recommendations.</p>
+      <h2>Fantasy Start/Sit Assistant</h2>
+      <p class="muted">Ask about your synced team. Recommendations use season fantasy averages and recent final scores.</p>
       <form id="assistantForm" class="sync-form">
         <textarea id="assistantQuestion" rows="3" placeholder="Ask about your lineup, e.g. Should I start Barkley or Jacobs?"></textarea>
         <button type="submit" class="btn-primary">Get Advice</button>
@@ -664,7 +664,21 @@
         });
         var data = await res.json();
         if (!res.ok) throw new Error(data.error || 'Assistant failed');
-        panel.innerHTML = '<h3>Advice (' + data.source + ')</h3><p style="white-space:pre-line">' + data.advice + '</p>';
+        panel.innerHTML = '';
+        var heading = document.createElement('h3');
+        heading.textContent = 'Advice (' + data.source + ')';
+        var advice = document.createElement('p');
+        advice.style.whiteSpace = 'pre-line';
+        advice.textContent = data.advice || 'No advice was returned.';
+        panel.appendChild(heading);
+        panel.appendChild(advice);
+        if (data.note) {
+          var note = document.createElement('p');
+          note.className = 'muted';
+          note.style.marginTop = '8px';
+          note.textContent = data.note;
+          panel.appendChild(note);
+        }
       } catch (err) {
         panel.innerHTML = '<p class="muted">\u2717 ' + err.message + '</p>';
       }

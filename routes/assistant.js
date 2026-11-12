@@ -28,15 +28,97 @@ async function mistralAdvise(context, question) {
   return data.choices[0].message.content;
 }
 
-function heuristicAdvise(roster) {
-  const starters = roster.filter(p => p.is_starter);
-  const bench = roster.filter(p => !p.is_starter);
-  const lines = [];
-  lines.push('Start your locked-in starters: ' + starters.slice(0, 3).map(p => p.full_name).join(', ') + '.');
-  if (bench.length) {
-    lines.push('Bench option to watch: ' + bench[0].full_name + ' (' + bench[0].position + ') — promote them if a starter is questionable or on bye.');
+function numberOrNull(value) {
+  const number = Number(value);
+  return value !== null && value !== '' && Number.isFinite(number) ? number : null;
+}
+
+function canShareSlot(a, b, sport) {
+  if (a.position === b.position) return true;
+  if (sport === 'nfl') {
+    const flexPositions = ['RB', 'FB', 'WR', 'TE'];
+    return flexPositions.includes(a.position) && flexPositions.includes(b.position);
   }
-  lines.push('General rule: favor players with a healthy matchup volume (targets/carries in NFL, minutes in NBA).');
+  const guardPositions = ['PG', 'SG', 'G'];
+  const forwardPositions = ['SF', 'PF', 'F'];
+  return (guardPositions.includes(a.position) && guardPositions.includes(b.position)) ||
+    (forwardPositions.includes(a.position) && forwardPositions.includes(b.position));
+}
+
+function formatPlayer(player) {
+  const average = player.projectedPoints === null
+    ? 'season average unavailable'
+    : player.projectedPoints.toFixed(1) + ' projected fantasy points/game';
+  const latest = player.finalPoints === null
+    ? 'latest final unavailable'
+    : player.finalPoints.toFixed(1) + ' points in the latest completed game';
+  return player.full_name + ' (' + player.position + ', ' + player.team + '): ' + average + '; ' + latest + '.';
+}
+
+function statsBasedAdvice(roster, sport, question) {
+  const starters = roster.filter(player => player.is_starter);
+  const bench = roster.filter(player => !player.is_starter && player.slot_type !== 'IR');
+  const namedPlayers = roster.filter(player => player.full_name.length > 2 &&
+    question.toLowerCase().includes(player.full_name.toLowerCase()));
+  const lines = [];
+
+  if (namedPlayers.length >= 2) {
+    const [first, second] = namedPlayers.slice(0, 2);
+    lines.push(formatPlayer(first));
+    lines.push(formatPlayer(second));
+    if (first.projectedPoints !== null && second.projectedPoints !== null) {
+      const winner = first.projectedPoints >= second.projectedPoints ? first : second;
+      const other = winner === first ? second : first;
+      const difference = Math.abs(first.projectedPoints - second.projectedPoints);
+      lines.push('Based on season fantasy points per game, ' + winner.full_name +
+        ' is the higher-projection choice by ' + difference.toFixed(1) + ' points/game. ' +
+        'This does not account for opponent matchup, injury news, or your league’s exact weekly projection.');
+    } else {
+      lines.push('I can’t make a reliable start/sit call between them because one or both season averages are unavailable. The latest final is historical, not a projection.');
+    }
+    return lines.join('\n');
+  }
+
+  const projectedStarters = starters.filter(player => player.projectedPoints !== null)
+    .sort((a, b) => b.projectedPoints - a.projectedPoints);
+  const projectedBench = bench.filter(player => player.projectedPoints !== null)
+    .sort((a, b) => b.projectedPoints - a.projectedPoints);
+
+  if (projectedStarters.length) {
+    lines.push('Your highest-projected starters: ' + projectedStarters.slice(0, 3)
+      .map(player => player.full_name + ' (' + player.projectedPoints.toFixed(1) + ' pts/game)').join(', ') + '.');
+  } else {
+    lines.push('Your synced roster does not have season fantasy-point averages available yet, so I can’t rank your starters reliably.');
+  }
+
+  const swaps = [];
+  for (const starter of starters) {
+    if (starter.projectedPoints === null) continue;
+    const betterBenchPlayer = projectedBench.find(player =>
+      !swaps.some(swap => swap.bench.full_name === player.full_name) &&
+      canShareSlot(starter, player, sport) &&
+      player.projectedPoints > starter.projectedPoints
+    );
+    if (betterBenchPlayer) {
+      swaps.push({ starter, bench: betterBenchPlayer });
+    }
+    if (swaps.length >= 2) break;
+  }
+
+  if (swaps.length) {
+    swaps.forEach(swap => {
+      const gap = swap.bench.projectedPoints - swap.starter.projectedPoints;
+      lines.push('Consider starting ' + swap.bench.full_name + ' over ' + swap.starter.full_name +
+        ' in a compatible roster spot: ' + swap.bench.projectedPoints.toFixed(1) + ' vs. ' +
+        swap.starter.projectedPoints.toFixed(1) + ' projected points/game (' + gap.toFixed(1) + ' higher).');
+    });
+  } else if (projectedBench.length && projectedStarters.length) {
+    lines.push('No bench player has a higher season average than a starter at a compatible position.');
+  } else if (bench.length) {
+    lines.push('Bench-player averages are unavailable, so I can’t recommend a supported swap yet.');
+  }
+
+  lines.push('These are season-average estimates, not matchup-specific weekly projections. Latest completed-game points are shown separately as past results.');
   return lines.join('\n');
 }
 
@@ -55,14 +137,19 @@ router.post('/assistant/start-sit', async (req, res) => {
       position: String(player.position || '—').slice(0, 20),
       team: String(player.team || '—').slice(0, 20),
       slot_type: String(player.slotType || 'BENCH').slice(0, 20),
-      is_starter: Boolean(player.isStarter)
+      is_starter: Boolean(player.isStarter || player.is_starter),
+      projectedPoints: numberOrNull(player.projectedPoints),
+      finalPoints: numberOrNull(player.finalPoints)
     }));
   if (!roster.length) {
     return res.status(400).json({ error: 'The loaded team has no player names to use.' });
   }
 
   const context = roster.map(p =>
-    (p.is_starter ? '[STARTER] ' : '[BENCH] ') + p.full_name + ' — ' + p.position + ' (' + (p.team || '?') + '), slot: ' + p.slot_type
+    (p.is_starter ? '[STARTER] ' : '[BENCH] ') + p.full_name + ' — ' + p.position + ' (' + (p.team || '?') +
+    '), slot: ' + p.slot_type + ', season fantasy points/game: ' +
+    (p.projectedPoints === null ? 'unavailable' : p.projectedPoints.toFixed(1)) +
+    ', latest final fantasy points: ' + (p.finalPoints === null ? 'unavailable' : p.finalPoints.toFixed(1))
   ).join('\n');
 
   try {
@@ -71,9 +158,19 @@ router.post('/assistant/start-sit', async (req, res) => {
       const advice = await mistralAdvise(context, safeQuestion || 'Who should I start this week?');
       return res.json({ source: 'mistral', advice });
     }
-    return res.json({ source: 'heuristic', advice: heuristicAdvise(roster) });
+    const safeQuestion = typeof question === 'string' ? question.slice(0, 1000) : '';
+    return res.json({
+      source: 'stats-based',
+      advice: statsBasedAdvice(roster, sport, safeQuestion || 'Who should I start this week?'),
+      note: 'A generative AI model is not connected. This recommendation uses your roster and available fantasy-point averages.'
+    });
   } catch (err) {
-    return res.json({ source: 'heuristic (fallback)', advice: heuristicAdvise(roster), note: 'AI call failed: ' + err.message });
+    const safeQuestion = typeof question === 'string' ? question.slice(0, 1000) : '';
+    return res.json({
+      source: 'stats-based fallback',
+      advice: statsBasedAdvice(roster, sport, safeQuestion || 'Who should I start this week?'),
+      note: 'The AI service could not respond, so this advice uses your roster and available fantasy-point averages.'
+    });
   }
 });
 
