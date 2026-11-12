@@ -4,10 +4,17 @@
   "description": "Fantasy football & basketball helper — Turf & Midnight",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "esbuild client/auth-client.js --bundle --minify --format=iife --platform=browser --outfile=public/js/auth-client.bundle.js && node server.js"
   },
   "dependencies": {
+    "@clerk/clerk-js": "^6.42.3",
+    "@clerk/express": "^2.1.88",
+    "@clerk/shared": "^4.44.1",
+    "@clerk/ui": "^1.42.4",
+    "cors": "^2.8.6",
+    "esbuild": "^0.28.2",
     "express": "^4.22.3",
+    "http-proxy-middleware": "^3.0.10",
     "pg": "^8.23.1"
   }
 }

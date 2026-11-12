@@ -25,6 +25,38 @@ async function fetchEspnJson(url) {
   return response.json();
 }
 
+async function fetchRecentEvents(league) {
+  const today = new Date();
+  const dates = Array.from({ length: 15 }, (_, offset) => {
+    const date = new Date(Date.UTC(
+      today.getUTCFullYear(),
+      today.getUTCMonth(),
+      today.getUTCDate() - offset
+    ));
+    return date.toISOString().slice(0, 10).replace(/-/g, '');
+  });
+  const eventsById = new Map();
+  let cursor = 0;
+  let successfulDays = 0;
+  const workers = Array.from({ length: 4 }, async () => {
+    while (cursor < dates.length) {
+      const date = dates[cursor++];
+      try {
+        const data = await fetchEspnJson(
+          `https://site.api.espn.com/apis/site/v2/sports/${league.path}/scoreboard?dates=${date}`
+        );
+        successfulDays++;
+        for (const event of data.events || []) eventsById.set(String(event.id), event);
+      } catch (error) {
+        console.warn(`Could not load ${league.abbr} scoreboard for ${date}:`, error.message);
+      }
+    }
+  });
+  await Promise.all(workers);
+  if (!successfulDays) throw new Error('ESPN recent scoreboards were unavailable.');
+  return [...eventsById.values()];
+}
+
 function eventState(event) {
   return event.status?.type || event.competitions?.[0]?.status?.type || {};
 }
@@ -51,14 +83,14 @@ async function getFeed(sport, league, scoringSettings) {
 
   const entry = { expiresAt: Date.now() + FEED_CACHE_MS };
   entry.promise = (async () => {
-    const data = await fetchEspnJson(`https://site.api.espn.com/apis/site/v2/sports/${league.path}/scoreboard`);
+    const scoreboardEvents = await fetchRecentEvents(league);
     const normalizedSettings = cleanScoringSettings(scoringSettings);
     const hasPositionOverrides = normalizedSettings?.scoringItems.some(item => item.pointsOverrides.length);
     const rosterById = hasPositionOverrides
       ? new Map((await getPlayerList(sport)).map(player => [player.id, player]))
       : new Map();
     const cutoff = Date.now() - 14 * 24 * 60 * 60 * 1000;
-    const events = (data.events || []).filter(event => {
+    const events = scoreboardEvents.filter(event => {
       const state = eventState(event);
       const live = state.state === 'in' || state.name === 'STATUS_IN_PROGRESS';
       const date = Date.parse(event.date || event.competitions?.[0]?.date || '');

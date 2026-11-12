@@ -12,6 +12,102 @@ if (USE_PG) {
 
 const mem = { users: [], players: [], rosters: [] };
 let memIds = { users: 0, players: 0, rosters: 0 };
+const savedTeamsMemory = new Map();
+
+function serializeSavedTeam(row) {
+  return {
+    id: row.id,
+    sport: row.sport,
+    name: row.name,
+    source: row.source,
+    providerKey: row.provider_key,
+    leagueName: row.league_name,
+    teamData: row.team_data,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
+  };
+}
+
+async function listSavedTeams(clerkUserId) {
+  if (USE_PG) {
+    const result = await pool.query(
+      `SELECT id, sport, name, source, provider_key, league_name, team_data, created_at, updated_at
+       FROM saved_teams
+       WHERE clerk_user_id = $1
+       ORDER BY updated_at DESC`,
+      [clerkUserId]
+    );
+    return result.rows.map(serializeSavedTeam);
+  }
+  return [...savedTeamsMemory.values()]
+    .filter(team => team.clerk_user_id === clerkUserId)
+    .sort((a, b) => new Date(b.updated_at) - new Date(a.updated_at))
+    .map(serializeSavedTeam);
+}
+
+async function saveSavedTeam(team) {
+  if (USE_PG) {
+    const result = await pool.query(
+      `INSERT INTO saved_teams
+         (clerk_user_id, sport, name, source, provider_key, league_name, team_data)
+       VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)
+       ON CONFLICT (clerk_user_id, provider_key)
+       DO UPDATE SET
+         sport = EXCLUDED.sport,
+         name = EXCLUDED.name,
+         source = EXCLUDED.source,
+         league_name = EXCLUDED.league_name,
+         team_data = EXCLUDED.team_data,
+         updated_at = NOW()
+       RETURNING id, sport, name, source, provider_key, league_name, team_data, created_at, updated_at`,
+      [
+        team.clerkUserId,
+        team.sport,
+        team.name,
+        team.source,
+        team.providerKey,
+        team.leagueName || null,
+        JSON.stringify(team.teamData)
+      ]
+    );
+    return serializeSavedTeam(result.rows[0]);
+  }
+
+  const key = `${team.clerkUserId}:${team.providerKey}`;
+  const old = savedTeamsMemory.get(key);
+  const now = new Date();
+  const row = {
+    id: old?.id || require('node:crypto').randomUUID(),
+    clerk_user_id: team.clerkUserId,
+    sport: team.sport,
+    name: team.name,
+    source: team.source,
+    provider_key: team.providerKey,
+    league_name: team.leagueName || null,
+    team_data: team.teamData,
+    created_at: old?.created_at || now,
+    updated_at: now
+  };
+  savedTeamsMemory.set(key, row);
+  return serializeSavedTeam(row);
+}
+
+async function deleteSavedTeam(clerkUserId, id) {
+  if (USE_PG) {
+    const result = await pool.query(
+      'DELETE FROM saved_teams WHERE clerk_user_id = $1 AND id = $2 RETURNING id',
+      [clerkUserId, id]
+    );
+    return result.rowCount > 0;
+  }
+  for (const [key, team] of savedTeamsMemory) {
+    if (team.clerk_user_id === clerkUserId && team.id === id) {
+      savedTeamsMemory.delete(key);
+      return true;
+    }
+  }
+  return false;
+}
 
 async function createUser(username, espnLeagueId) {
   if (USE_PG) {
@@ -81,4 +177,13 @@ async function getRoster(userId, sport) {
     });
 }
 
-module.exports = { USE_PG, createUser, upsertPlayer, replaceRoster, getRoster };
+module.exports = {
+  USE_PG,
+  createUser,
+  upsertPlayer,
+  replaceRoster,
+  getRoster,
+  listSavedTeams,
+  saveSavedTeam,
+  deleteSavedTeam
+};

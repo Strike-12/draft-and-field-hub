@@ -24,3 +24,20 @@ CREATE TABLE IF NOT EXISTS user_rosters (
   slot_type VARCHAR(10) NOT NULL,
   is_starter BOOLEAN DEFAULT FALSE
 );
+
+CREATE TABLE IF NOT EXISTS saved_teams (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  clerk_user_id VARCHAR(255) NOT NULL,
+  sport VARCHAR(3) NOT NULL CHECK (sport IN ('nfl', 'nba')),
+  name VARCHAR(120) NOT NULL,
+  source VARCHAR(20) NOT NULL CHECK (source IN ('custom', 'generated', 'espn')),
+  provider_key VARCHAR(300) NOT NULL,
+  league_name VARCHAR(120),
+  team_data JSONB NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (clerk_user_id, provider_key)
+);
+
+CREATE INDEX IF NOT EXISTS saved_teams_user_updated_idx
+  ON saved_teams (clerk_user_id, updated_at DESC);

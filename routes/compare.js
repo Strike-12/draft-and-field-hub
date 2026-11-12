@@ -152,6 +152,12 @@ async function buildPlayerStats(sport, player, scoringSettings) {
   }).filter(game => game.values.length);
 
   const recentGames = games.slice(0, 5);
+  const recentFantasyScores = recentGames
+    .map(game => game.fantasyPoints)
+    .filter(Number.isFinite);
+  const recentFantasyPointsAverage = recentFantasyScores.length
+    ? Number((recentFantasyScores.reduce((sum, value) => sum + value, 0) / recentFantasyScores.length).toFixed(1))
+    : null;
   const averages = keys.map(key => {
     const index = data.names.indexOf(key);
     const values = events.map(event => event.stats?.[index])
@@ -171,6 +177,7 @@ async function buildPlayerStats(sport, player, scoringSettings) {
     fantasyPointsAverage: validFantasyScores.length
       ? Number((validFantasyScores.reduce((sum, value) => sum + value, 0) / validFantasyScores.length).toFixed(1))
       : null,
+    recentFantasyPointsAverage,
     fantasyScoring: scoringLabel(sport, scoringSettings),
     lastFinalPoints: games[0]?.fantasyPoints ?? null,
     lastFinalDate: games[0]?.date || '',
@@ -205,6 +212,63 @@ router.get('/players/:sport', async (req, res) => {
     res.json({ sport, players, count: players.length });
   } catch (error) {
     res.status(502).json({ error: `Could not load ${sport.toUpperCase()} players: ${error.message}` });
+  }
+});
+
+router.post('/players/:sport/stats', async (req, res) => {
+  const sport = (req.params.sport || '').toLowerCase();
+  if (!SPORTS[sport]) {
+    return res.status(400).json({ error: "sport must be 'nfl' or 'nba'" });
+  }
+  const ids = [...new Set((Array.isArray(req.body?.playerIds) ? req.body.playerIds : [])
+    .map(id => String(id).slice(0, 40))
+    .filter(id => /^\d{1,40}$/.test(id)))].slice(0, 30);
+  if (!ids.length) return res.status(400).json({ error: 'Choose at least one player.' });
+
+  try {
+    const players = await getPlayerList(sport);
+    const byId = new Map(players.map(player => [player.id, player]));
+    let cursor = 0;
+    const results = new Array(ids.length);
+    const workers = Array.from({ length: Math.min(6, ids.length) }, async () => {
+      while (cursor < ids.length) {
+        const index = cursor++;
+        const player = byId.get(ids[index]);
+        if (!player) {
+          results[index] = { id: ids[index], error: 'Player not found on a current team roster.' };
+          continue;
+        }
+        try {
+          const stats = await getPlayerStats(sport, player, req.body?.scoringSettings);
+          const seasonAverage = stats.fantasyPointsAverage;
+          const recentAverage = stats.recentFantasyPointsAverage;
+          const projectedPoints = Number.isFinite(seasonAverage)
+            ? Number((seasonAverage * 0.7 + (Number.isFinite(recentAverage) ? recentAverage : seasonAverage) * 0.3).toFixed(1))
+            : null;
+          results[index] = {
+            id: player.id,
+            fullName: player.full_name,
+            position: player.position,
+            team: player.team,
+            status: player.status,
+            seasonAverage,
+            recentAverage,
+            projectedPoints,
+            finalPoints: stats.lastFinalPoints,
+            finalDate: stats.lastFinalDate,
+            gamesPlayed: stats.gamesPlayed,
+            scoringLabel: stats.fantasyScoring
+          };
+        } catch (error) {
+          results[index] = { id: player.id, error: `Player stats unavailable: ${error.message}` };
+        }
+      }
+    });
+    await Promise.all(workers);
+    res.set('Cache-Control', 'no-store');
+    res.json({ sport, players: results });
+  } catch (error) {
+    res.status(502).json({ error: `Could not load ${sport.toUpperCase()} player stats: ${error.message}` });
   }
 });
 

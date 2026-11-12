@@ -86,13 +86,15 @@ async function mapWithConcurrency(items, limit, callback) {
   return results.filter(Boolean);
 }
 
-function selectSlots(sport, players) {
+function selectSlots(sport, players, avoidPlayerIds = []) {
   const sorted = players.filter(player => Number.isFinite(player.projectedPoints))
     .sort((a, b) => b.projectedPoints - a.projectedPoints);
+  const avoid = new Set(avoidPlayerIds.map(String));
   const used = new Set();
   const slots = [];
   const addSlot = (slotType, eligible) => {
-    const player = sorted.find(candidate => !used.has(candidate.id) && eligible(candidate));
+    const matches = sorted.filter(candidate => !used.has(candidate.id) && eligible(candidate));
+    const player = matches.find(candidate => !avoid.has(String(candidate.id))) || matches[0];
     if (player) {
       used.add(player.id);
       slots.push({ ...player, slotType });
@@ -125,9 +127,10 @@ function selectSlots(sport, players) {
   return { slots, note: 'NBA lineup uses two guards, two forwards, one center, and five flexible spots.' };
 }
 
-async function buildProjectedTeam(sport, scoringSettings) {
+async function buildProjectedTeam(sport, scoringSettings, avoidPlayerIds = []) {
   const signature = scoringSignature(sport, scoringSettings);
-  const cacheKey = `${sport}:${signature}`;
+  const avoidKey = [...new Set(avoidPlayerIds.map(String))].sort().join(',');
+  const cacheKey = `${sport}:${signature}:${avoidKey}`;
   const cached = projectionCache.get(cacheKey);
   if (cached && cached.expiresAt > Date.now()) return cached.promise;
 
@@ -150,16 +153,23 @@ async function buildProjectedTeam(sport, scoringSettings) {
         fullName: player.full_name,
         position: player.position,
         team: player.team,
-        projectedPoints: stats.fantasyPointsAverage,
+        seasonAverage: stats.fantasyPointsAverage,
+        recentAverage: stats.recentFantasyPointsAverage,
+        projectedPoints: Number.isFinite(stats.fantasyPointsAverage)
+          ? Number((stats.fantasyPointsAverage * 0.7 +
+            (Number.isFinite(stats.recentFantasyPointsAverage)
+              ? stats.recentFantasyPointsAverage
+              : stats.fantasyPointsAverage) * 0.3).toFixed(1))
+          : null,
         finalPoints: stats.lastFinalPoints,
         finalDate: stats.lastFinalDate
       };
     });
-    const lineup = selectSlots(sport, ranked);
+    const lineup = selectSlots(sport, ranked, avoidPlayerIds);
     return {
       sport,
       scoringLabel: require('../lib/fantasy-scoring').scoringLabel(sport, scoringSettings),
-      projectionBasis: 'Projected points use each player’s current-season fantasy points per game. Final points show the latest completed game.',
+      projectionBasis: 'Estimated points/game blend current-season fantasy average (70%) and last-five-game average (30%). Latest final is shown separately.',
       note: lineup.note,
       projectedTeam: lineup.slots
     };
@@ -305,7 +315,10 @@ async function sendProjections(req, res) {
   const sport = (req.params.sport || '').toLowerCase();
   if (!['nfl', 'nba'].includes(sport)) return res.status(400).json({ error: "sport must be 'nfl' or 'nba'" });
   try {
-    const result = await buildProjectedTeam(sport, req.body?.scoringSettings);
+    const avoidPlayerIds = Array.isArray(req.body?.avoidPlayerIds)
+      ? req.body.avoidPlayerIds.map(String).filter(id => /^\d{1,40}$/.test(id)).slice(0, 30)
+      : [];
+    const result = await buildProjectedTeam(sport, req.body?.scoringSettings, avoidPlayerIds);
     res.set('Cache-Control', req.method === 'GET' ? 'public, max-age=600' : 'no-store');
     res.json(result);
   } catch (error) {
@@ -365,3 +378,4 @@ router.post('/sync/espn/team', async (req, res) => {
 module.exports = router;
 module.exports.parsePublicLeagueUrl = parsePublicLeagueUrl;
 module.exports.getRosterForTeam = getRosterForTeam;
+module.exports.buildProjectedTeam = buildProjectedTeam;
