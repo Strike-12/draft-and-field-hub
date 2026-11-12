@@ -1,3 +1,4 @@
 - [App audience and purpose](app-audience-purpose.md) — keep team building, player stats, and recent performance useful without an ESPN sync.
 - [ESPN connection scope](espn-connection-scope.md) — connect public leagues by share link and consent; do not request ESPN passwords or cookie tokens.
 - [Fantasy scoring and auto-built teams](fantasy-scoring-and-auto-teams.md) — build without sync; follow public league scoring or use ESPN defaults and label estimates.
+- [Start/sit assistant behavior](start-sit-assistant.md) — use roster stats when no language model is connected, and state that limitation clearly.
