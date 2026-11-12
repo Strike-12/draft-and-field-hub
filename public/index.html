@@ -56,13 +56,21 @@
 
     <!-- NFL Lineup -->
     <section class="card lineup-card hidden" id="lineup-nfl">
-      <h2><span id="lineupTitleNfl">NFL Team Roster</span> <span class="badge">NFL</span></h2>
+      <div class="lineup-heading">
+        <h2><span id="lineupTitleNfl">NFL Team Lineup</span> <span class="badge">NFL</span></h2>
+        <button id="buildSyncedNflBtn" class="btn-secondary build-synced-btn" type="button">Build Best Lineup</button>
+      </div>
+      <p id="lineupSummaryNfl" class="muted lineup-summary" aria-live="polite"></p>
       <div class="lineup-grid" id="grid-nfl"></div>
     </section>
 
     <!-- NBA Lineup -->
     <section class="card lineup-card hidden" id="lineup-nba">
-      <h2><span id="lineupTitleNba">NBA Team Roster</span> <span class="badge">NBA</span></h2>
+      <div class="lineup-heading">
+        <h2><span id="lineupTitleNba">NBA Team Lineup</span> <span class="badge">NBA</span></h2>
+        <button id="buildSyncedNbaBtn" class="btn-secondary build-synced-btn" type="button">Build Best Lineup</button>
+      </div>
+      <p id="lineupSummaryNba" class="muted lineup-summary" aria-live="polite"></p>
       <div class="lineup-grid" id="grid-nba"></div>
     </section>
 
@@ -116,9 +124,11 @@
 
   <footer class="footer"><p>Draft &amp; Field Hub — Turf &amp; Midnight</p></footer>
 
+  <script src="/js/lineup-builder.js"></script>
   <script>
     var currentSport = 'nfl';
     var syncedRosters = { nfl: null, nba: null };
+    var syncedTeamNames = { nfl: '', nba: '' };
     var leagueScoringSettings = { nfl: null, nba: null };
     var pendingLeagueUrl = '';
     var comparePlayers = [];
@@ -153,9 +163,20 @@
 
     // ===== Build My Team (Phase 6) =====
     document.getElementById('buildTeamBtn').addEventListener('click', function () {
+      if (syncedRosters[currentSport] && syncedRosters[currentSport].length) {
+        renderSyncedRoster(currentSport);
+        document.getElementById('lineup-' + currentSport).scrollIntoView({ behavior: 'smooth' });
+        return;
+      }
       document.getElementById('projected').classList.remove('hidden');
       document.getElementById('projected').scrollIntoView({ behavior: 'smooth' });
       loadProjections();
+    });
+    document.querySelectorAll('.build-synced-btn').forEach(function (button) {
+      button.addEventListener('click', function () {
+        var sport = button.id === 'buildSyncedNbaBtn' ? 'nba' : 'nfl';
+        if (syncedRosters[sport]) renderSyncedRoster(sport);
+      });
     });
 
     async function loadProjections() {
@@ -274,10 +295,11 @@
         var data = await res.json();
         if (!res.ok) throw new Error(data.error || 'Could not load this team');
         syncedRosters[data.sport] = data.roster;
+        syncedTeamNames[data.sport] = data.teamName;
         leagueScoringSettings[data.sport] = data.scoringSettings || leagueScoringSettings[data.sport];
         switchSport(data.sport);
-        renderSyncedRoster(data);
-        status.textContent = 'Loaded ' + data.teamName + ' from ' + data.leagueName + '. Your roster stays in this page session.' +
+        renderSyncedRoster(data.sport);
+        status.textContent = 'Loaded ' + data.teamName + ' from ' + data.leagueName + ' and built your best lineup. Your roster stays in this page session.' +
           (data.roster.some(function (player) { return player.statsUnavailable; }) ? ' Some ESPN fantasy scores were unavailable.' : '');
         document.getElementById('teamPicker').classList.add('hidden');
       } catch (err) {
@@ -287,31 +309,50 @@
       }
     });
 
-    function renderSyncedRoster(data) {
-      var grid = document.getElementById('grid-' + data.sport);
-      var title = document.getElementById(data.sport === 'nfl' ? 'lineupTitleNfl' : 'lineupTitleNba');
-      title.textContent = data.teamName + ' Roster';
+    function renderSyncedRoster(sport) {
+      var grid = document.getElementById('grid-' + sport);
+      var isNfl = sport === 'nfl';
+      var title = document.getElementById(isNfl ? 'lineupTitleNfl' : 'lineupTitleNba');
+      var summary = document.getElementById(isNfl ? 'lineupSummaryNfl' : 'lineupSummaryNba');
+      var roster = syncedRosters[sport] || [];
+      var lineup = buildBestRosterLineup(roster, sport);
+      var teamName = syncedTeamNames[sport] || sport.toUpperCase() + ' Team';
+      title.textContent = teamName + ' Suggested Lineup';
       grid.innerHTML = '';
-      data.roster.forEach(function (player) {
+      var displayedPlayers = lineup.slots.map(function (slot) {
+        return slot.player ? Object.assign({}, slot.player, {
+          displaySlot: slot.slotType,
+          displayRole: 'Suggested starter'
+        }) : {
+          displaySlot: slot.slotType,
+          displayRole: 'No eligible player'
+        };
+      }).concat(lineup.bench.map(function (player) {
+        return Object.assign({}, player, {
+          displaySlot: player.suggestedSlot,
+          displayRole: player.suggestedSlot === 'IR' ? 'Injured reserve' : 'Bench'
+        });
+      }));
+      displayedPlayers.forEach(function (player) {
         var slot = document.createElement('div');
-        slot.className = 'slot filled';
+        slot.className = 'slot' + (player.fullName ? ' filled' : '');
         var position = document.createElement('span');
         position.className = 'slot-pos';
-        position.textContent = player.slotType || player.position;
+        position.textContent = player.displaySlot;
         var name = document.createElement('span');
         name.className = 'slot-player';
-        name.textContent = player.fullName + ' \u00b7 ' + (player.team || '—');
+        name.textContent = player.fullName ? player.fullName + ' \u00b7 ' + (player.team || '—') : 'No eligible player on roster';
         var role = document.createElement('span');
         role.className = 'slot-pts';
-        role.textContent = player.isStarter ? 'Starter' : 'Bench';
+        role.textContent = player.displayRole;
         var projected = document.createElement('span');
         projected.className = 'slot-final';
-        projected.textContent = Number.isFinite(player.projectedPoints)
+        projected.textContent = player.fullName && Number.isFinite(player.projectedPoints)
           ? 'Projected ' + player.projectedPoints.toFixed(1) + ' pts/game'
           : 'Projected —';
         var final = document.createElement('span');
         final.className = 'slot-final';
-        if (Number.isFinite(player.finalPoints)) {
+        if (player.fullName && Number.isFinite(player.finalPoints)) {
           var date = player.finalDate ? new Date(player.finalDate) : null;
           var dateLabel = date && !Number.isNaN(date.getTime())
             ? ' · ' + date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
@@ -327,6 +368,9 @@
         slot.appendChild(final);
         grid.appendChild(slot);
       });
+      summary.textContent = 'Suggested starters: ' + lineup.filledCount + '/' + lineup.slotCount +
+        ' · Projected total: ' + lineup.projectionTotal.toFixed(1) + ' pts/game (' +
+        lineup.projectedCount + '/' + lineup.slotCount + ' projections available). Season averages are estimates.';
     }
 
     // Live feed (Phase 3)
@@ -613,7 +657,9 @@
           body: JSON.stringify({
             sport: currentSport,
             question: document.getElementById('assistantQuestion').value.trim(),
-            roster: roster
+            roster: roster.map(function (player) {
+              return Object.assign({}, player, { is_starter: player.isStarter });
+            })
           })
         });
         var data = await res.json();
