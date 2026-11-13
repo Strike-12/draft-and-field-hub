@@ -244,6 +244,11 @@
       return !/^Bench\s/i.test(slotType) && slotType !== 'IR';
     }
 
+    function plausibleFantasyPointsPerGame(sport, value) {
+      var ceiling = sport === 'nfl' ? 100 : 150;
+      return Number.isFinite(value) && Math.abs(value) <= ceiling;
+    }
+
     function ensureCustomSlots(sport) {
       if (!Array.isArray(customTeamSlots[sport])) {
         customTeamSlots[sport] = customSlotTypes(sport).map(function (slotType) {
@@ -273,7 +278,7 @@
     function customProjectionTotal(sport) {
       return ensureCustomSlots(sport).reduce(function (sum, slot) {
         return sum + (isCustomStarterSlot(slot.slotType) && slot.player &&
-          Number.isFinite(slot.player.projectedPoints) ? slot.player.projectedPoints : 0);
+          plausibleFantasyPointsPerGame(sport, slot.player.projectedPoints) ? slot.player.projectedPoints : 0);
       }, 0);
     }
 
@@ -286,7 +291,7 @@
       var starters = slots.filter(function (slot) { return isCustomStarterSlot(slot.slotType); });
       var selectedStarters = starters.filter(function (slot) { return Boolean(slot.player); });
       var projectedCount = selectedStarters.filter(function (slot) {
-        return Number.isFinite(slot.player.projectedPoints);
+        return plausibleFantasyPointsPerGame(currentSport, slot.player.projectedPoints);
       }).length;
 
       slots.forEach(function (slot, index) {
@@ -313,7 +318,7 @@
           name.textContent = slot.player.fullName + ' · ' + (slot.player.teamName || slot.player.team);
           var points = document.createElement('span');
           points.className = 'custom-player-points';
-          points.textContent = Number.isFinite(slot.player.projectedPoints)
+          points.textContent = plausibleFantasyPointsPerGame(currentSport, slot.player.projectedPoints)
             ? 'Estimate ' + slot.player.projectedPoints.toFixed(1) + ' pts/game'
             : slot.player.position === 'D/ST'
               ? 'Defense estimate unavailable'
@@ -321,11 +326,11 @@
           var averages = document.createElement('span');
           averages.className = 'muted custom-player-averages';
           averages.textContent = slot.player.position === 'D/ST'
-            ? (Number.isFinite(slot.player.seasonAverage) ? 'Season defense average ' + slot.player.seasonAverage.toFixed(1) + ' pts/game' : 'Defense projection based on ESPN team season stats')
+            ? (plausibleFantasyPointsPerGame(currentSport, slot.player.seasonAverage) ? 'Season defense average ' + slot.player.seasonAverage.toFixed(1) + ' pts/game' : 'Defense projection based on ESPN team season stats')
             : 'Season ' +
-            (Number.isFinite(slot.player.seasonAverage) ? slot.player.seasonAverage.toFixed(1) : '—') +
+            (plausibleFantasyPointsPerGame(currentSport, slot.player.seasonAverage) ? slot.player.seasonAverage.toFixed(1) : '—') +
             ' · Last 5 ' +
-            (Number.isFinite(slot.player.recentAverage) ? slot.player.recentAverage.toFixed(1) : '—');
+            (plausibleFantasyPointsPerGame(currentSport, slot.player.recentAverage) ? slot.player.recentAverage.toFixed(1) : '—');
           var remove = document.createElement('button');
           remove.className = 'remove-player-btn';
           remove.type = 'button';

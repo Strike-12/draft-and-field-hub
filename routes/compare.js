@@ -263,7 +263,10 @@ async function buildPlayerStats(sport, player, scoringSettings) {
   const events = (regularSeason?.categories || []).flatMap(category => category.events || []);
   const keys = metricKeys(sport, player.position, data.names || []);
   const fantasyScores = events.map(event => scoreGameLog(sport, data.names || [], event.stats || [], scoringSettings, player.position));
-  const validFantasyScores = fantasyScores.filter(Number.isFinite);
+  const singleGameCeiling = sport === 'nfl' ? 100 : 150;
+  const validFantasyScores = fantasyScores.filter(score =>
+    Number.isFinite(score) && Math.abs(score) <= singleGameCeiling
+  );
   const labels = new Map((data.names || []).map((name, index) => [
     name,
     (data.displayNames || [])[index] || name
@@ -277,7 +280,10 @@ async function buildPlayerStats(sport, player, scoringSettings) {
       opponent: details.opponent?.abbreviation || details.opponent?.shortDisplayName || details.opponent?.displayName || '',
       result: details.gameResult || '',
       score: details.score || '',
-      fantasyPoints: scoreGameLog(sport, data.names || [], event.stats || [], scoringSettings, player.position),
+      fantasyPoints: (() => {
+        const score = scoreGameLog(sport, data.names || [], event.stats || [], scoringSettings, player.position);
+        return Number.isFinite(score) && Math.abs(score) <= singleGameCeiling ? score : null;
+      })(),
       values: keys.map(key => {
         const index = data.names.indexOf(key);
         return { label: labels.get(key), value: event.stats?.[index] ?? '—' };
@@ -313,7 +319,7 @@ async function buildPlayerStats(sport, player, scoringSettings) {
       : null,
     recentFantasyPointsAverage,
     fantasyScoring: scoringLabel(sport, scoringSettings),
-    lastFinalPoints: games[0]?.fantasyPoints ?? null,
+    lastFinalPoints: games.find(game => Number.isFinite(game.fantasyPoints))?.fantasyPoints ?? null,
     lastFinalDate: games[0]?.date || '',
     averages,
     recentGames
