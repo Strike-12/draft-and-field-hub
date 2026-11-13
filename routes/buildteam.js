@@ -240,9 +240,15 @@ async function getPublicLeague(league) {
     throw Object.assign(new Error(`ESPN returned an error (${response.status}). Please try again.`), { status: 502 });
   }
   const data = await response.json();
+  const memberById = new Map((data.members || []).flatMap(member => {
+    const name = member.displayName ||
+      [member.firstName, member.lastName].filter(Boolean).join(' ').trim();
+    return name && member.id ? [[String(member.id), name]] : [];
+  }));
   const teams = (data.teams || []).map(team => ({
     id: String(team.id),
-    name: team.name || [team.location, team.nickname].filter(Boolean).join(' ') || `Team ${team.id}`
+    name: team.name || [team.location, team.nickname].filter(Boolean).join(' ') || `Team ${team.id}`,
+    managerName: (team.owners || []).map(owner => memberById.get(String(owner))).filter(Boolean).join(', ')
   }));
   if (!teams.length) {
     throw Object.assign(new Error('ESPN returned no teams for this public league.'), { status: 404 });
@@ -367,6 +373,7 @@ router.post('/sync/espn/team', async (req, res) => {
       sport: league.sport,
       leagueName: result.leagueName,
       teamName: result.teams.find(candidate => candidate.id === teamId)?.name,
+      managerName: result.teams.find(candidate => candidate.id === teamId)?.managerName || '',
       scoringSettings: result.scoringSettings,
       roster: rosterWithStats
     });

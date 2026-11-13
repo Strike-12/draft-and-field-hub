@@ -19,6 +19,7 @@ const CACHE_TTL_MS = 10 * 60 * 1000;
 const TEAM_FETCH_CONCURRENCY = 8;
 const playerCache = new Map();
 const statsCache = new Map();
+const defenseCache = { expiresAt: 0, promise: null };
 
 async function fetchEspnJson(url) {
   const response = await fetch(url, { signal: AbortSignal.timeout(15000) });
@@ -55,6 +56,7 @@ async function buildPlayerList(sport) {
         full_name: player.fullName || player.displayName || '',
         position: player.position?.abbreviation || '—',
         team: team.abbreviation,
+        teamName: team.displayName || [team.location, team.name].filter(Boolean).join(' '),
         jersey: player.jersey || '',
         status: player.status?.type || 'active'
       })).filter(player => player.id && player.full_name);
@@ -78,6 +80,138 @@ async function getPlayerList(sport) {
   });
   playerCache.set(sport, entry);
   return entry.promise;
+}
+
+function categoryStat(categories, categoryName, statName) {
+  const category = (categories || []).find(item => item.name === categoryName);
+  const stat = category?.stats?.find(item => item.name === statName);
+  const value = Number(stat?.value);
+  return Number.isFinite(value) ? value : 0;
+}
+
+function pointsAllowedBonus(points) {
+  if (points === 0) return 10;
+  if (points <= 6) return 7;
+  if (points <= 13) return 4;
+  if (points <= 17) return 1;
+  if (points <= 27) return 0;
+  if (points <= 34) return -1;
+  return -4;
+}
+
+async function buildDefenseList(teamAbbreviation = '') {
+  const data = await fetchEspnJson(
+    'https://site.api.espn.com/apis/site/v2/sports/football/nfl/teams?limit=100'
+  );
+  const teams = data.sports?.[0]?.leagues?.[0]?.teams
+    ?.map(entry => entry.team)
+    .filter(team => team?.id && team.abbreviation && team.isActive !== false &&
+      (!teamAbbreviation || team.abbreviation.toUpperCase() === teamAbbreviation.toUpperCase())) || [];
+  if (!teams.length) throw new Error('ESPN did not return active NFL teams.');
+
+  const results = new Array(teams.length);
+  let cursor = 0;
+  const workers = Array.from({ length: 8 }, async () => {
+    while (cursor < teams.length) {
+      const index = cursor++;
+      const team = teams[index];
+      try {
+        const [statistics, schedule] = await Promise.all([
+          fetchEspnJson(`https://site.api.espn.com/apis/site/v2/sports/football/nfl/teams/${team.id}/statistics`),
+          fetchEspnJson(`https://site.api.espn.com/apis/site/v2/sports/football/nfl/teams/${team.id}/schedule`)
+        ]);
+        const categories = statistics.results?.stats?.categories || [];
+        const games = (schedule.events || []).flatMap(event => event.competitions || [])
+          .filter(competition => competition.status?.type?.completed)
+          .map(competition => {
+            const opponent = (competition.competitors || []).find(item => String(item.id) !== String(team.id));
+            const pointsAllowed = Number(
+              typeof opponent?.score === 'object'
+                ? (opponent.score.value ?? opponent.score.displayValue)
+                : opponent?.score
+            );
+            return Number.isFinite(pointsAllowed) ? pointsAllowed : null;
+          }).filter(Number.isFinite);
+        const gamesPlayed = games.length || categoryStat(categories, 'general', 'gamesPlayed');
+        if (!gamesPlayed) throw new Error('No completed games in ESPN team data.');
+
+        const sacks = categoryStat(categories, 'defensive', 'sacks') / gamesPlayed;
+        const interceptions = categoryStat(categories, 'defensiveInterceptions', 'interceptions') / gamesPlayed;
+        const recoveries = categoryStat(categories, 'general', 'fumblesRecovered') / gamesPlayed;
+        const defensiveTouchdowns = (
+          categoryStat(categories, 'defensive', 'miscTouchdowns') +
+          categoryStat(categories, 'defensiveInterceptions', 'interceptionTouchdowns') +
+          categoryStat(categories, 'general', 'fumblesTouchdowns') +
+          categoryStat(categories, 'returning', 'kickReturnTouchdowns') +
+          categoryStat(categories, 'returning', 'puntReturnTouchdowns')
+        ) / gamesPlayed;
+        const allowedBonus = games.length
+          ? games.reduce((sum, points) => sum + pointsAllowedBonus(points), 0) / games.length
+          : 0;
+        const projectedPoints = Number((
+          sacks + interceptions * 2 + recoveries * 2 + defensiveTouchdowns * 6 + allowedBonus
+        ).toFixed(1));
+        results[index] = {
+          id: `dst-${team.id}`,
+          full_name: `${team.displayName || team.abbreviation} D/ST`,
+          position: 'D/ST',
+          team: team.abbreviation,
+          teamName: team.displayName || team.abbreviation,
+          status: 'active',
+          isDefense: true,
+          seasonAverage: projectedPoints,
+          recentAverage: null,
+          projectedPoints,
+          finalPoints: null,
+          finalDate: '',
+          gamesPlayed,
+          scoringLabel: 'ESPN default D/ST estimate'
+        };
+      } catch (error) {
+        results[index] = {
+          id: `dst-${team.id}`,
+          full_name: `${team.displayName || team.abbreviation} D/ST`,
+          position: 'D/ST',
+          team: team.abbreviation,
+          teamName: team.displayName || team.abbreviation,
+          status: 'active',
+          isDefense: true,
+          seasonAverage: null,
+          recentAverage: null,
+          projectedPoints: null,
+          finalPoints: null,
+          finalDate: '',
+          gamesPlayed: 0,
+          scoringLabel: 'ESPN default D/ST estimate',
+          statsUnavailable: true
+        };
+      }
+    }
+  });
+  await Promise.all(workers);
+  return results.sort((a, b) => a.full_name.localeCompare(b.full_name));
+}
+
+async function getDefenseList() {
+  if (defenseCache.promise && defenseCache.expiresAt > Date.now()) return defenseCache.promise;
+  defenseCache.expiresAt = Date.now() + CACHE_TTL_MS;
+  defenseCache.promise = buildDefenseList().catch(error => {
+    defenseCache.expiresAt = 0;
+    defenseCache.promise = null;
+    throw error;
+  });
+  return defenseCache.promise;
+}
+
+async function getDefenseForTeam(teamAbbreviation) {
+  const data = await fetchEspnJson(
+    'https://site.api.espn.com/apis/site/v2/sports/football/nfl/teams?limit=100'
+  );
+  const team = data.sports?.[0]?.leagues?.[0]?.teams?.map(entry => entry.team)
+    .find(item => item?.abbreviation?.toUpperCase() === teamAbbreviation.toUpperCase());
+  if (!team) throw new Error('ESPN did not find that NFL team.');
+  const results = await buildDefenseList(team.abbreviation);
+  return results;
 }
 
 function metricKeys(sport, position, names) {
@@ -212,6 +346,30 @@ router.get('/players/:sport', async (req, res) => {
     res.json({ sport, players, count: players.length });
   } catch (error) {
     res.status(502).json({ error: `Could not load ${sport.toUpperCase()} players: ${error.message}` });
+  }
+});
+
+router.get('/teams/nfl', async (req, res) => {
+  try {
+    const players = await getPlayerList('nfl');
+    const teams = [...new Map(players.map(player => [
+      player.team,
+      { abbreviation: player.team, name: player.teamName || player.team }
+    ])).values()].sort((a, b) => a.name.localeCompare(b.name));
+    res.set('Cache-Control', 'public, max-age=600');
+    res.json({ teams });
+  } catch (error) {
+    res.status(502).json({ error: `Could not load NFL teams: ${error.message}` });
+  }
+});
+
+router.get('/teams/nfl/defenses', async (req, res) => {
+  try {
+    res.set('Cache-Control', 'public, max-age=600');
+    const abbreviation = String(req.query.team || '').trim().slice(0, 4);
+    res.json({ teams: abbreviation ? await getDefenseForTeam(abbreviation) : await getDefenseList() });
+  } catch (error) {
+    res.status(502).json({ error: `Could not load NFL defenses: ${error.message}` });
   }
 });
 

@@ -1,4 +1,5 @@
 const express = require('express');
+const { randomUUID } = require('node:crypto');
 const { getAuth } = require('@clerk/express');
 const {
   listSavedTeams,
@@ -66,6 +67,7 @@ function makeTeamData(input, leagueInfo) {
     projectionBasis: String(input.projectionBasis || '').slice(0, 500),
     scoringLabel: String(input.scoringLabel || '').slice(0, 80),
     scoringSettings: cleanScoringSettings(input.scoringSettings),
+    managerName: String(input.managerName || '').slice(0, 120),
     leagueUrl: leagueInfo?.leagueUrl || null,
     teamId: leagueInfo?.teamId || null,
     leagueId: leagueInfo?.leagueId || null,
@@ -109,6 +111,11 @@ router.post('/my-teams', requireSignedIn, async (req, res) => {
         season: league.season,
         teamId
       };
+    } else if (source === 'generated') {
+      const requestedKey = String(input.providerKey || '');
+      providerKey = /^generated:(nfl|nba):[a-z0-9-]{1,100}$/i.test(requestedKey)
+        ? requestedKey
+        : `generated:${sport}:${randomUUID()}`;
     } else {
       providerKey = `${source}:${sport}`;
     }

@@ -140,7 +140,8 @@ async function getFeed(sport, league, scoringSettings) {
         const competitors = competition.competitors || [];
         for (const player of athletes.values()) {
           const fantasyPoints = scoreBoxScore(sport, player.groups, scoringSettings, player.position);
-          if (!Number.isFinite(fantasyPoints)) continue;
+          const plausibleSingleGameCeiling = sport === 'nfl' ? 100 : 150;
+          if (!Number.isFinite(fantasyPoints) || Math.abs(fantasyPoints) > plausibleSingleGameCeiling) continue;
           const opponent = competitors.find(team => team.team?.abbreviation !== player.team)?.team?.abbreviation;
           completed.push({
             name: player.name,

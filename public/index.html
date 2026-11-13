@@ -87,7 +87,7 @@
     <section class="card feed-card">
       <h2>Top Performers <span id="feedSport">NFL</span></h2>
       <table>
-        <thead><tr><th>Player</th><th>Fantasy points</th><th>Highlights</th><th>Team</th><th>Game</th></tr></thead>
+        <thead><tr><th>Player</th><th>Fantasy points (that game)</th><th>Highlights</th><th>Team</th><th>Game</th></tr></thead>
         <tbody id="feedBody"><tr><td colspan="5" class="muted">Loading feed…</td></tr></tbody>
       </table>
     </section>
@@ -119,7 +119,7 @@
 
     <section class="card custom-team-card" id="customTeamBuilder">
       <h2>Make Your Own Team <span id="customSportBadge" class="badge">NFL</span></h2>
-      <p class="muted">Search current players and add them to open lineup spots. Each pick shows season averages, recent form, and an estimated points total.</p>
+      <p class="muted">NFL roster: QB, 2 RB, 2 WR, TE, FLEX, D/ST, K, 7 bench slots, and 1 IR slot. Search by player or team; close spelling matches are included. Defense estimates use team season stats.</p>
       <div class="saved-team-controls">
         <label for="savedTeamSelect">Your saved teams</label>
         <select id="savedTeamSelect">
@@ -133,7 +133,7 @@
           <label for="customTeamName">Name your team</label>
           <input id="customTeamName" type="text" maxlength="60" placeholder="My NFL team" />
           <label for="customPlayerSearch">Search players</label>
-          <input id="customPlayerSearch" type="search" autocomplete="off" placeholder="Search name, position, or team" />
+        <input id="customPlayerSearch" type="search" autocomplete="off" placeholder="Search player or team (typos are okay)" />
           <p id="customSearchStatus" class="muted" aria-live="polite">Load the player list to search.</p>
           <div id="customSearchResults" class="custom-search-results"></div>
         </div>
@@ -184,6 +184,7 @@
     var customSearchVersion = 0;
     var customSearchTimer;
     var customStatsCache = { nfl: new Map(), nba: new Map() };
+    var customDefenseCache = [];
 
     // Sport switcher
     function switchSport(sport) {
@@ -233,8 +234,13 @@
 
     function customSlotTypes(sport) {
       return sport === 'nfl'
-        ? ['QB', 'RB1', 'RB2', 'WR1', 'WR2', 'TE', 'FLEX', 'K']
+        ? ['QB', 'RB1', 'RB2', 'WR1', 'WR2', 'TE', 'FLEX', 'D/ST', 'K',
+          'Bench 1', 'Bench 2', 'Bench 3', 'Bench 4', 'Bench 5', 'Bench 6', 'Bench 7', 'IR']
         : ['PG', 'SG', 'SF', 'PF', 'C', 'UTIL1', 'UTIL2', 'UTIL3', 'UTIL4', 'UTIL5'];
+    }
+
+    function isCustomStarterSlot(slotType) {
+      return !/^Bench\s/i.test(slotType) && slotType !== 'IR';
     }
 
     function ensureCustomSlots(sport) {
@@ -247,12 +253,14 @@
     }
 
     function customPlayerFitsSlot(slotType, player, sport) {
-      var slot = slotType.replace(/\d+$/, '').toUpperCase();
+      var slot = slotType.replace(/\d+$/, '').trim().toUpperCase();
       var position = String(player.position || '').toUpperCase();
       if (sport === 'nfl') {
+        if (slot === 'BENCH' || slot === 'IR') return ['QB', 'RB', 'FB', 'WR', 'TE', 'K', 'PK', 'D/ST', 'DST', 'DEF'].includes(position);
         if (slot === 'FLEX') return ['RB', 'FB', 'WR', 'TE'].includes(position);
         if (slot === 'RB') return ['RB', 'FB'].includes(position);
         if (slot === 'K') return ['K', 'PK'].includes(position);
+        if (slot === 'D/ST' || slot === 'DST' || slot === 'DEF') return ['D/ST', 'DST', 'DEF'].includes(position);
         return slot === position;
       }
       if (slot === 'UTIL') return ['PG', 'SG', 'G', 'SF', 'PF', 'F', 'C'].includes(position);
@@ -263,7 +271,8 @@
 
     function customProjectionTotal(sport) {
       return ensureCustomSlots(sport).reduce(function (sum, slot) {
-        return sum + (slot.player && Number.isFinite(slot.player.projectedPoints) ? slot.player.projectedPoints : 0);
+        return sum + (isCustomStarterSlot(slot.slotType) && slot.player &&
+          Number.isFinite(slot.player.projectedPoints) ? slot.player.projectedPoints : 0);
       }, 0);
     }
 
@@ -273,7 +282,9 @@
       var summary = document.getElementById('customProjectionSummary');
       container.innerHTML = '';
       var selected = slots.filter(function (slot) { return Boolean(slot.player); });
-      var projectedCount = selected.filter(function (slot) {
+      var starters = slots.filter(function (slot) { return isCustomStarterSlot(slot.slotType); });
+      var selectedStarters = starters.filter(function (slot) { return Boolean(slot.player); });
+      var projectedCount = selectedStarters.filter(function (slot) {
         return Number.isFinite(slot.player.projectedPoints);
       }).length;
 
@@ -297,10 +308,14 @@
           points.className = 'custom-player-points';
           points.textContent = Number.isFinite(slot.player.projectedPoints)
             ? 'Estimate ' + slot.player.projectedPoints.toFixed(1) + ' pts/game'
-            : 'Estimate unavailable';
+            : slot.player.position === 'D/ST'
+              ? 'Defense estimate unavailable'
+              : 'Estimate unavailable';
           var averages = document.createElement('span');
           averages.className = 'muted custom-player-averages';
-          averages.textContent = 'Season ' +
+          averages.textContent = slot.player.position === 'D/ST'
+            ? (Number.isFinite(slot.player.seasonAverage) ? 'Season defense average ' + slot.player.seasonAverage.toFixed(1) + ' pts/game' : 'Defense projection based on ESPN team season stats')
+            : 'Season ' +
             (Number.isFinite(slot.player.seasonAverage) ? slot.player.seasonAverage.toFixed(1) : '—') +
             ' · Last 5 ' +
             (Number.isFinite(slot.player.recentAverage) ? slot.player.recentAverage.toFixed(1) : '—');
@@ -325,8 +340,8 @@
 
       summary.textContent = selected.length
         ? 'Estimated starting total: ' + customProjectionTotal(currentSport).toFixed(1) +
-          ' fantasy points/game (' + projectedCount + '/' + slots.length +
-          ' player estimates available). Estimate blends season and recent averages.'
+          ' fantasy points/game (' + projectedCount + '/' + starters.length +
+          ' starter estimates available). Bench and IR are not included.'
         : 'Add players to see your estimated fantasy points per game.';
       document.getElementById('saveCustomTeamBtn').disabled = selected.length === 0;
     }
@@ -409,7 +424,9 @@
           projectedTotal: projectedTotal,
           projectionBasis: data.projectionBasis,
           scoringLabel: data.scoringLabel
-        }
+        },
+        providerKey: 'generated:' + sport + ':' +
+          (crypto.randomUUID ? crypto.randomUUID() : String(Date.now()))
       }, false);
     }
 
@@ -493,7 +510,10 @@
       savedTeams.forEach(function (team) {
         var option = document.createElement('option');
         option.value = String(team.id);
+        var managerName = team.teamData && team.teamData.managerName;
         option.textContent = team.sport.toUpperCase() + ' · ' + team.name +
+          (managerName ? ' · ' + managerName : '') +
+          (team.leagueName ? ' · ' + team.leagueName : '') +
           ' (' + (team.source === 'espn' ? 'ESPN' : team.source === 'generated' ? 'built' : 'custom') + ')';
         select.appendChild(option);
       });
@@ -573,7 +593,8 @@
 
       if (team.source === 'espn') {
         syncedRosters[sport] = data.roster || [];
-        syncedTeamNames[sport] = data.teamName || team.name;
+        syncedTeamNames[sport] = (data.teamName || team.name) +
+          (data.managerName ? ' · ' + data.managerName : '');
         leagueScoringSettings[sport] = data.scoringSettings || null;
         document.getElementById('projected').classList.add('hidden');
         switchSport(sport);
@@ -627,6 +648,7 @@
       var selected = savedTeams.find(function (team) { return String(team.id) === this.value; }, this);
       document.getElementById('loadSavedTeamBtn').disabled = !selected;
       document.getElementById('deleteSavedTeamBtn').disabled = !selected;
+      if (selected) restoreSavedTeam(selected);
     });
     document.getElementById('loadSavedTeamBtn').addEventListener('click', function () {
       var team = savedTeams.find(function (entry) {
@@ -663,7 +685,7 @@
       }).map(function (slot) {
         return Object.assign({}, slot.player, {
           slotType: slot.slotType,
-          isStarter: true
+        isStarter: isCustomStarterSlot(slot.slotType)
         });
       });
       return {
@@ -702,6 +724,52 @@
       saveCustomTeam(false);
     });
 
+    function searchText(value) {
+      return String(value || '').toLowerCase().replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim();
+    }
+
+    function editDistance(left, right) {
+      var previous = Array.from({ length: right.length + 1 }, function (_, index) { return index; });
+      for (var row = 1; row <= left.length; row++) {
+        var current = [row];
+        for (var column = 1; column <= right.length; column++) {
+          current[column] = Math.min(
+            current[column - 1] + 1,
+            previous[column] + 1,
+            previous[column - 1] + (left[row - 1] === right[column - 1] ? 0 : 1)
+          );
+        }
+        previous = current;
+      }
+      return previous[right.length];
+    }
+
+    function customPlayerSearchScore(player, query) {
+      var normalized = searchText(query);
+      var name = searchText(player.full_name);
+      var team = searchText(player.teamName + ' ' + player.team);
+      var position = searchText(player.position);
+      if (name.includes(normalized)) return 100;
+      if (name.split(' ').some(function (part) { return part.startsWith(normalized); })) return 92;
+      if (team.includes(normalized)) return 85;
+      if (position === normalized) return 80;
+      if (normalized.length < 3) return 0;
+
+      var maxDistance = Math.max(1, Math.floor(normalized.length * 0.3));
+      var words = name.split(' ').concat(team.split(' '));
+      var distance = Math.min.apply(null, words.map(function (word) {
+        return editDistance(normalized, word);
+      }));
+      return distance <= maxDistance ? 60 - distance : 0;
+    }
+
+    function customSearchPositionAllowed(player, sport) {
+      var position = String(player.position || '').toUpperCase();
+      return sport === 'nfl'
+        ? ['QB', 'RB', 'FB', 'WR', 'TE', 'K', 'PK'].includes(position)
+        : ['PG', 'SG', 'G', 'SF', 'PF', 'F', 'C'].includes(position);
+    }
+
     async function populateCustomSearchResults() {
       var query = document.getElementById('customPlayerSearch').value.trim().toLowerCase();
       var container = document.getElementById('customSearchResults');
@@ -715,39 +783,62 @@
         status.textContent = 'Player list is still loading. Try again in a moment.';
         return;
       }
-      var matches = comparePlayers.filter(function (player) {
-        return (player.full_name + ' ' + player.position + ' ' + player.team).toLowerCase().includes(query);
-      }).slice(0, 15);
-      if (!matches.length) {
-        status.textContent = 'No current players matched that search.';
-        return;
-      }
+      var rankedMatches = comparePlayers.filter(function (player) {
+        return customSearchPositionAllowed(player, currentSport);
+      }).map(function (player) {
+        return { player: player, score: customPlayerSearchScore(player, query) };
+      }).filter(function (match) { return match.score > 0; })
+        .sort(function (a, b) { return b.score - a.score || a.player.full_name.localeCompare(b.player.full_name); });
+      var matches = rankedMatches.slice(0, 12).map(function (match) { return match.player; });
+      var cleanedQuery = searchText(query).replace(/\b(defense|defence|d st|dst)\b/g, '').trim();
+      var matchingTeam = comparePlayers.find(function (player) {
+        var teamName = searchText(player.teamName);
+        return cleanedQuery && (teamName === cleanedQuery || player.team.toLowerCase() === cleanedQuery ||
+          teamName.includes(cleanedQuery));
+      });
+      var wantsDefenses = currentSport === 'nfl' &&
+        (/\b(defense|defence|dst|d\/st)\b/i.test(query) || Boolean(matchingTeam));
       var version = ++customSearchVersion;
       var sport = currentSport;
       status.textContent = 'Checking season and recent fantasy averages…';
       try {
-        var response = await fetch('/api/players/' + sport + '/stats', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            playerIds: matches.map(function (player) { return player.id; }),
-            scoringSettings: leagueScoringSettings[sport]
-          })
-        });
-        var data = await response.json();
-        if (!response.ok) throw new Error(data.error || 'Could not load player averages');
+        var defensePromise = wantsDefenses
+          ? fetch('/api/teams/nfl/defenses' + (matchingTeam ? '?team=' + encodeURIComponent(matchingTeam.team) : ''))
+            .then(function (response) { return response.json().then(function (data) {
+              if (!response.ok) throw new Error(data.error || 'Could not load NFL team defenses');
+              return data.teams || [];
+            }); })
+          : Promise.resolve([]);
+        var statsPromise = matches.length
+          ? fetch('/api/players/' + sport + '/stats', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              playerIds: matches.map(function (player) { return player.id; }),
+              scoringSettings: leagueScoringSettings[sport]
+            })
+          }).then(function (response) { return response.json().then(function (data) {
+            if (!response.ok) throw new Error(data.error || 'Could not load player averages');
+            return data.players || [];
+          }); })
+          : Promise.resolve([]);
+        var results = await Promise.all([statsPromise, defensePromise]);
+        var playerResults = results[0];
+        var defenses = results[1];
         if (version !== customSearchVersion || sport !== currentSport) return;
-        data.players.forEach(function (player) {
+        playerResults.forEach(function (player) {
           if (!player.error) customStatsCache[sport].set(player.id, player);
         });
         container.innerHTML = '';
-        data.players.forEach(function (player) {
+        playerResults.forEach(function (player) {
           if (player.error) return;
           var row = document.createElement('div');
           row.className = 'custom-player-result';
           var details = document.createElement('div');
           var name = document.createElement('strong');
-          name.textContent = player.fullName + ' · ' + player.position + ', ' + player.team;
+          var playerRecord = comparePlayers.find(function (candidate) { return candidate.id === player.id; });
+          name.textContent = player.fullName + ' · ' + player.position + ', ' +
+            (playerRecord && playerRecord.teamName ? playerRecord.teamName : player.team);
           var metrics = document.createElement('span');
           metrics.className = 'muted';
           metrics.textContent = 'Season ' + (Number.isFinite(player.seasonAverage) ? player.seasonAverage.toFixed(1) : '—') +
@@ -764,8 +855,32 @@
           row.appendChild(add);
           container.appendChild(row);
         });
-        status.textContent = data.players.length + ' player' + (data.players.length === 1 ? '' : 's') + ' checked using ' +
-          (data.players[0]?.scoringLabel || 'current fantasy scoring') + '.';
+        defenses.forEach(function (player) {
+          var row = document.createElement('div');
+          row.className = 'custom-player-result';
+          var details = document.createElement('div');
+          var name = document.createElement('strong');
+          name.textContent = player.full_name + ' · NFL defense';
+          var metrics = document.createElement('span');
+          metrics.className = 'muted';
+          metrics.textContent = Number.isFinite(player.projectedPoints)
+            ? 'Season-based estimate ' + player.projectedPoints.toFixed(1) + ' pts/game · ' + player.gamesPlayed + ' games'
+            : 'ESPN defense stats unavailable';
+          details.appendChild(name);
+          details.appendChild(metrics);
+          var add = document.createElement('button');
+          add.type = 'button';
+          add.className = 'btn-secondary';
+          add.textContent = 'Add';
+          add.addEventListener('click', function () { addPlayerToCustomTeam(player); });
+          row.appendChild(details);
+          row.appendChild(add);
+          container.appendChild(row);
+        });
+        status.textContent = (playerResults.length + defenses.length) + ' matching result' +
+          (playerResults.length + defenses.length === 1 ? '' : 's') +
+          (rankedMatches.length > matches.length ? ' · closest spelling matches shown' : '') +
+          '. Estimates use ' + (playerResults[0]?.scoringLabel || 'ESPN fantasy data') + '.';
       } catch (error) {
         if (version === customSearchVersion) status.textContent = error.message;
       }
@@ -844,7 +959,7 @@
         data.teams.forEach(function (team) {
           var option = document.createElement('option');
           option.value = team.id;
-          option.textContent = team.name;
+          option.textContent = team.name + (team.managerName ? ' · ' + team.managerName : '');
           teamSelect.appendChild(option);
         });
         document.getElementById('teamPicker').classList.remove('hidden');
@@ -875,7 +990,8 @@
         var data = await res.json();
         if (!res.ok) throw new Error(data.error || 'Could not load this team');
         syncedRosters[data.sport] = data.roster;
-        syncedTeamNames[data.sport] = data.teamName;
+        syncedTeamNames[data.sport] = data.teamName +
+          (data.managerName ? ' · ' + data.managerName : '');
         leagueScoringSettings[data.sport] = data.scoringSettings || leagueScoringSettings[data.sport];
         switchSport(data.sport);
         renderSyncedRoster(data.sport);
@@ -893,7 +1009,8 @@
             teamName: data.teamName,
             leagueName: data.leagueName,
             roster: data.roster,
-            scoringSettings: data.scoringSettings
+            scoringSettings: data.scoringSettings,
+            managerName: data.managerName || ''
           }
         }, false);
         status.textContent = 'Loaded ' + data.teamName + ' from ' + data.leagueName +
