@@ -90,6 +90,7 @@
         <thead><tr><th>Player</th><th>Fantasy points (that game)</th><th>Highlights</th><th>Team</th><th>Game</th></tr></thead>
         <tbody id="feedBody"><tr><td colspan="5" class="muted">Loading feed…</td></tr></tbody>
       </table>
+      <p class="muted">These are fantasy points scored in one game, not season totals.</p>
     </section>
 
     <!-- Quick Compare (Phase 4) -->
@@ -119,7 +120,7 @@
 
     <section class="card custom-team-card" id="customTeamBuilder">
       <h2>Make Your Own Team <span id="customSportBadge" class="badge">NFL</span></h2>
-      <p class="muted">NFL roster: QB, 2 RB, 2 WR, TE, FLEX, D/ST, K, 7 bench slots, and 1 IR slot. Search by player or team; close spelling matches are included. Defense estimates use team season stats.</p>
+      <p class="muted">NFL roster: QB, 2 RB, 2 WR, TE, FLEX, D/ST, K, 7 bench slots, and 1 IR slot. Search by player or team; close spelling matches are included. D/ST estimates use ESPN default defense scoring, so your league's defense rules may differ.</p>
       <div class="saved-team-controls">
         <label for="savedTeamSelect">Your saved teams</label>
         <select id="savedTeamSelect">
@@ -289,6 +290,12 @@
       }).length;
 
       slots.forEach(function (slot, index) {
+        if (slot.slotType === 'Bench 1' || slot.slotType === 'IR') {
+          var heading = document.createElement('h4');
+          heading.className = 'custom-slot-group-heading';
+          heading.textContent = slot.slotType === 'IR' ? 'Injured Reserve' : 'Bench (7 slots)';
+          container.appendChild(heading);
+        }
         var card = document.createElement('div');
         card.className = 'custom-slot' + (slot.player ? ' filled' : '');
         var position = document.createElement('span');
@@ -303,7 +310,7 @@
           card.appendChild(empty);
         } else {
           var name = document.createElement('strong');
-          name.textContent = slot.player.fullName + ' · ' + slot.player.team;
+          name.textContent = slot.player.fullName + ' · ' + (slot.player.teamName || slot.player.team);
           var points = document.createElement('span');
           points.className = 'custom-player-points';
           points.textContent = Number.isFinite(slot.player.projectedPoints)
@@ -685,7 +692,7 @@
       }).map(function (slot) {
         return Object.assign({}, slot.player, {
           slotType: slot.slotType,
-        isStarter: isCustomStarterSlot(slot.slotType)
+          isStarter: isCustomStarterSlot(slot.slotType)
         });
       });
       return {
@@ -770,6 +777,24 @@
         : ['PG', 'SG', 'G', 'SF', 'PF', 'F', 'C'].includes(position);
     }
 
+    function addSlotChooser(row, player) {
+      var options = ensureCustomSlots(currentSport).filter(function (slot) {
+        return !slot.player && customPlayerFitsSlot(slot.slotType, player, currentSport);
+      });
+      if (options.length <= 1) return null;
+      var select = document.createElement('select');
+      select.className = 'custom-slot-choice';
+      select.setAttribute('aria-label', 'Choose a roster slot for ' + (player.fullName || player.full_name));
+      options.forEach(function (slot) {
+        var option = document.createElement('option');
+        option.value = slot.slotType;
+        option.textContent = slot.slotType;
+        select.appendChild(option);
+      });
+      row.appendChild(select);
+      return select;
+    }
+
     async function populateCustomSearchResults() {
       var query = document.getElementById('customPlayerSearch').value.trim().toLowerCase();
       var container = document.getElementById('customSearchResults');
@@ -837,8 +862,8 @@
           var details = document.createElement('div');
           var name = document.createElement('strong');
           var playerRecord = comparePlayers.find(function (candidate) { return candidate.id === player.id; });
-          name.textContent = player.fullName + ' · ' + player.position + ', ' +
-            (playerRecord && playerRecord.teamName ? playerRecord.teamName : player.team);
+          player.teamName = playerRecord && playerRecord.teamName ? playerRecord.teamName : player.team;
+          name.textContent = player.fullName + ' · ' + player.position + ', ' + player.teamName;
           var metrics = document.createElement('span');
           metrics.className = 'muted';
           metrics.textContent = 'Season ' + (Number.isFinite(player.seasonAverage) ? player.seasonAverage.toFixed(1) : '—') +
@@ -846,11 +871,14 @@
             ' · Estimate ' + (Number.isFinite(player.projectedPoints) ? player.projectedPoints.toFixed(1) : '—') + ' pts/game';
           details.appendChild(name);
           details.appendChild(metrics);
+          var slotChoice = addSlotChooser(row, player);
           var add = document.createElement('button');
           add.type = 'button';
           add.className = 'btn-secondary';
           add.textContent = 'Add';
-          add.addEventListener('click', function () { addPlayerToCustomTeam(player); });
+          add.addEventListener('click', function () {
+            addPlayerToCustomTeam(player, slotChoice && slotChoice.value);
+          });
           row.appendChild(details);
           row.appendChild(add);
           container.appendChild(row);
@@ -868,11 +896,14 @@
             : 'ESPN defense stats unavailable';
           details.appendChild(name);
           details.appendChild(metrics);
+          var slotChoice = addSlotChooser(row, player);
           var add = document.createElement('button');
           add.type = 'button';
           add.className = 'btn-secondary';
           add.textContent = 'Add';
-          add.addEventListener('click', function () { addPlayerToCustomTeam(player); });
+          add.addEventListener('click', function () {
+            addPlayerToCustomTeam(player, slotChoice && slotChoice.value);
+          });
           row.appendChild(details);
           row.appendChild(add);
           container.appendChild(row);
@@ -886,18 +917,22 @@
       }
     }
 
-    function addPlayerToCustomTeam(player) {
+    function addPlayerToCustomTeam(player, requestedSlotType) {
       var slots = ensureCustomSlots(currentSport);
       if (slots.some(function (slot) { return slot.player && slot.player.id === player.id; })) {
         document.getElementById('customSaveStatus').textContent = player.fullName + ' is already in your lineup.';
         return;
       }
-      var index = slots.findIndex(function (slot) {
+      var index = requestedSlotType ? slots.findIndex(function (slot) {
+        return slot.slotType === requestedSlotType && !slot.player &&
+          customPlayerFitsSlot(slot.slotType, player, currentSport);
+      }) : -1;
+      if (index < 0) index = slots.findIndex(function (slot) {
         return !slot.player && customPlayerFitsSlot(slot.slotType, player, currentSport);
       });
       if (index < 0) {
         document.getElementById('customSaveStatus').textContent =
-          'There is no open compatible starting spot for ' + player.fullName + '. Remove a player or change sports.';
+          'There is no open compatible roster spot for ' + player.fullName + '. Remove a player or change sports.';
         return;
       }
       slots[index].player = player;

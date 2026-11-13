@@ -168,8 +168,10 @@ body.light .slot.filled .slot-player { color: #0B132B; }
 .custom-player-result > div { display: grid; gap: 4px; min-width: 0; }
 .custom-player-result strong { color: var(--white); }
 .custom-player-result .muted { font-size: 0.78rem; }
+.custom-player-result .custom-slot-choice { max-width: 140px; min-height: 36px; padding: 6px; }
 .custom-lineup-panel h3 { color: var(--turf); font-size: 1rem; }
 .custom-lineup-slots { display: grid; gap: 8px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.custom-slot-group-heading { grid-column: 1 / -1; color: var(--turf); font-size: 0.88rem; margin: 8px 0 0; }
 .custom-slot {
   display: flex;
   flex-direction: column;

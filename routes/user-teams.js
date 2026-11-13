@@ -36,6 +36,8 @@ function cleanPlayer(player) {
     fullName,
     position: String(player.position || '—').slice(0, 20),
     team: String(player.team || '—').slice(0, 20),
+    teamName: String(player.teamName || '').slice(0, 100),
+    isDefense: Boolean(player.isDefense || String(player.position || '').toUpperCase() === 'D/ST'),
     slotType: String(player.slotType || player.suggestedSlot || 'BENCH').slice(0, 20),
     isStarter: Boolean(player.isStarter || player.is_starter || player.suggestedStarter),
     seasonAverage: safePoints(player.seasonAverage ?? player.fantasyPointsAverage),
