@@ -144,6 +144,19 @@
           <p id="customProjectionSummary" class="lineup-summary" aria-live="polite">Add players to see estimated points.</p>
           <p id="customSaveStatus" class="sync-status" aria-live="polite"></p>
           <button id="saveCustomTeamBtn" class="btn-primary" type="button">Save My Team</button>
+          <section class="weekly-outlook" aria-labelledby="weeklyOutlookHeading">
+            <div class="weekly-outlook-heading">
+              <div>
+                <h3 id="weeklyOutlookHeading">Weekly schedule &amp; points</h3>
+                <p class="muted">See game status, current injury news, estimated points, and actual points for your selected players.</p>
+              </div>
+              <label for="teamWeekSelect">Choose a week
+                <select id="teamWeekSelect"></select>
+              </label>
+            </div>
+            <p id="weeklyOutlookStatus" class="muted" aria-live="polite">Add players to see their weekly outlook.</p>
+            <div id="weeklyOutlookResults"></div>
+          </section>
         </div>
       </div>
     </section>
@@ -187,6 +200,9 @@
     var customSearchTimer;
     var customStatsCache = { nfl: new Map(), nba: new Map() };
     var customDefenseCache = [];
+    var teamWeekStarts = { nfl: '', nba: '' };
+    var weeklyOutlookRequestVersion = 0;
+    var weeklyOutlookTimer;
 
     // Sport switcher
     function switchSport(sport) {
@@ -200,7 +216,9 @@
       document.getElementById('lineup-nba').classList.toggle('hidden', sport !== 'nba' || !syncedRosters.nba);
       document.getElementById('customSportBadge').textContent = sport.toUpperCase();
       document.getElementById('customTeamName').value = customTeamNames[sport];
+      populateTeamWeekOptions();
       renderCustomLineup();
+      scheduleWeeklyOutlookReload();
       if (connectedLeagues[sport]) {
         var activeLeague = connectedLeagues[sport];
         renderLeagueTeamChoices(activeLeague, activeLeague.leagueUrl, activeLeague.selectedTeamId);
@@ -268,6 +286,236 @@
       var ceiling = sport === 'nfl' ? 100 : 150;
       return Number.isFinite(value) && Math.abs(value) <= ceiling;
     }
+
+    function appendAvailability(parent, player) {
+      var status = String(player.injuryStatus || '').trim();
+      if (!status) {
+        status = player.status === 'active' ? 'Active' : (player.status || 'Status unavailable');
+      }
+      var normalized = status.toLowerCase();
+      var tone = /out|injur|inactive|suspend|doubtful/.test(normalized)
+        ? 'unavailable'
+        : /questionable|day.to.day|probable|limited/.test(normalized)
+          ? 'caution'
+          : /active|available|healthy/.test(normalized)
+            ? 'available'
+            : 'unknown';
+      var badge = document.createElement('span');
+      badge.className = 'availability-badge availability-' + tone;
+      badge.textContent = status;
+      parent.appendChild(badge);
+      if (player.injuryNote) {
+        var note = document.createElement('span');
+        note.className = 'availability-note';
+        note.textContent = player.injuryNote;
+        parent.appendChild(note);
+      }
+    }
+
+    function mondayForDate(date) {
+      var monday = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+      monday.setDate(monday.getDate() - ((monday.getDay() + 6) % 7));
+      return monday.getFullYear() + '-' +
+        String(monday.getMonth() + 1).padStart(2, '0') + '-' +
+        String(monday.getDate()).padStart(2, '0');
+    }
+
+    function weekRangeLabel(weekStart) {
+      var start = new Date(weekStart + 'T12:00:00');
+      var end = new Date(start);
+      end.setDate(end.getDate() + 6);
+      var format = { month: 'short', day: 'numeric' };
+      return start.toLocaleDateString(undefined, format) + '–' +
+        end.toLocaleDateString(undefined, format);
+    }
+
+    function populateTeamWeekOptions() {
+      var select = document.getElementById('teamWeekSelect');
+      var sport = currentSport;
+      var currentWeek = mondayForDate(new Date());
+      if (!teamWeekStarts[sport]) teamWeekStarts[sport] = currentWeek;
+      select.innerHTML = '';
+      for (var offset = -2; offset <= 4; offset++) {
+        var start = new Date(currentWeek + 'T12:00:00');
+        start.setDate(start.getDate() + offset * 7);
+        var value = start.getFullYear() + '-' +
+          String(start.getMonth() + 1).padStart(2, '0') + '-' +
+          String(start.getDate()).padStart(2, '0');
+        var option = document.createElement('option');
+        option.value = value;
+        option.textContent = (offset === 0 ? 'This week · ' : '') +
+          (offset === 1 ? 'Next week · ' : '') +
+          (offset === -1 ? 'Last week · ' : '') + weekRangeLabel(value);
+        select.appendChild(option);
+      }
+      if (!Array.from(select.options).some(function (option) {
+        return option.value === teamWeekStarts[sport];
+      })) teamWeekStarts[sport] = currentWeek;
+      select.value = teamWeekStarts[sport];
+    }
+
+    function scheduleWeeklyOutlookReload() {
+      clearTimeout(weeklyOutlookTimer);
+      weeklyOutlookTimer = setTimeout(loadWeeklyOutlook, 250);
+    }
+
+    function appendWeeklyCell(row, value, className) {
+      var cell = document.createElement('td');
+      if (className) cell.className = className;
+      cell.textContent = value;
+      row.appendChild(cell);
+      return cell;
+    }
+
+    function renderWeeklyOutlook(data) {
+      var container = document.getElementById('weeklyOutlookResults');
+      container.innerHTML = '';
+      var range = weekRangeLabel(data.weekStart);
+      document.getElementById('weeklyOutlookStatus').textContent =
+        (data.sport === 'nfl' && data.weekNumber ? 'NFL Week ' + data.weekNumber + ' · ' : '') +
+        range + ' · ' + (data.scoringLabel || 'ESPN scoring') +
+        ' · Injury labels show the current ESPN report.';
+
+      if (data.games.length) {
+        var gamesHeading = document.createElement('h4');
+        gamesHeading.className = 'weekly-section-title';
+        gamesHeading.textContent = 'Scheduled games';
+        container.appendChild(gamesHeading);
+        var gamesList = document.createElement('div');
+        gamesList.className = 'weekly-games-list';
+        data.games.forEach(function (game) {
+          var gameCard = document.createElement('div');
+          gameCard.className = 'weekly-game';
+          var matchup = document.createElement('strong');
+          matchup.textContent = game.awayTeam + ' @ ' + game.homeTeam;
+          var detail = document.createElement('span');
+          var gameDate = game.date ? new Date(game.date).toLocaleString(undefined, {
+            weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit'
+          }) : '';
+          detail.textContent = [gameDate, game.status, game.statusDetail].filter(Boolean).join(' · ');
+          gameCard.appendChild(matchup);
+          gameCard.appendChild(detail);
+          gamesList.appendChild(gameCard);
+        });
+        container.appendChild(gamesList);
+      } else {
+        var noGames = document.createElement('p');
+        noGames.className = 'muted weekly-empty';
+        noGames.textContent = 'No games are listed for this week yet.';
+        container.appendChild(noGames);
+      }
+
+      if (data.players.length) {
+        var starters = data.players.filter(function (player) {
+          return !/^bench/i.test(player.slotType) && player.slotType !== 'IR';
+        });
+        var projectedTotal = starters.reduce(function (sum, player) {
+          return sum + (Number.isFinite(player.projectedPoints) ? player.projectedPoints : 0);
+        }, 0);
+        var actualTotal = starters.reduce(function (sum, player) {
+          return sum + (Number.isFinite(player.actualPoints) ? player.actualPoints : 0);
+        }, 0);
+        var pointsSummary = document.createElement('p');
+        pointsSummary.className = 'weekly-total';
+        pointsSummary.textContent = 'Starting lineup · Estimated ' + projectedTotal.toFixed(1) +
+          ' pts · Actual so far ' + actualTotal.toFixed(1) + ' pts';
+        container.appendChild(pointsSummary);
+
+        var tableWrap = document.createElement('div');
+        tableWrap.className = 'weekly-table-wrap';
+        var table = document.createElement('table');
+        table.className = 'weekly-player-table';
+        var head = document.createElement('thead');
+        var headRow = document.createElement('tr');
+        ['Slot / player', 'Injury status', 'Matchups', 'Estimated', 'Actual so far'].forEach(function (title) {
+          var cell = document.createElement('th');
+          cell.textContent = title;
+          headRow.appendChild(cell);
+        });
+        head.appendChild(headRow);
+        table.appendChild(head);
+        var body = document.createElement('tbody');
+        data.players.forEach(function (player) {
+          var row = document.createElement('tr');
+          appendWeeklyCell(row, (player.slotType || player.position) + ' · ' + player.fullName);
+          var statusCell = document.createElement('td');
+          appendAvailability(statusCell, player);
+          row.appendChild(statusCell);
+          var matchup = player.opponents.length
+            ? player.opponents.join(', ') + ' · ' + player.gamesScheduled + ' game' +
+              (player.gamesScheduled === 1 ? '' : 's')
+            : player.gameStatus;
+          appendWeeklyCell(row, matchup);
+          appendWeeklyCell(row, Number.isFinite(player.projectedPoints)
+            ? player.projectedPoints.toFixed(1) + ' pts'
+            : '—');
+          appendWeeklyCell(row, Number.isFinite(player.actualPoints)
+            ? player.actualPoints.toFixed(1) + ' pts (' + player.gamesPlayed + ' played)'
+            : '—');
+          if (player.injuryNote) row.title = player.injuryNote;
+          body.appendChild(row);
+        });
+        table.appendChild(body);
+        tableWrap.appendChild(table);
+        container.appendChild(tableWrap);
+      }
+
+      var notes = [data.projectionNote, data.actualNote].concat(data.notes || []);
+      var note = document.createElement('p');
+      note.className = 'muted weekly-footnote';
+      note.textContent = notes.filter(Boolean).join(' ');
+      container.appendChild(note);
+    }
+
+    async function loadWeeklyOutlook() {
+      var status = document.getElementById('weeklyOutlookStatus');
+      var container = document.getElementById('weeklyOutlookResults');
+      var sportAtRequest = currentSport;
+      var requestVersion = ++weeklyOutlookRequestVersion;
+      var selectedPlayers = ensureCustomSlots(sportAtRequest)
+        .filter(function (slot) { return Boolean(slot.player); })
+        .map(function (slot) {
+          return {
+            id: String(slot.player.id || ''),
+            slotType: slot.slotType,
+            team: slot.player.team || ''
+          };
+        })
+        .filter(function (player) { return player.id; });
+      if (!selectedPlayers.length) {
+        status.textContent = 'Add players to your ' + sportAtRequest.toUpperCase() + ' team to see weekly games and points.';
+        container.innerHTML = '';
+        return;
+      }
+
+      var weekStart = teamWeekStarts[sportAtRequest] || mondayForDate(new Date());
+      status.textContent = 'Loading the ' + weekRangeLabel(weekStart) + ' schedule and scores…';
+      container.innerHTML = '';
+      try {
+        var response = await fetch('/api/weekly/' + sportAtRequest, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            weekStart: weekStart,
+            players: selectedPlayers,
+            scoringSettings: leagueScoringSettings[sportAtRequest]
+          })
+        });
+        var data = await response.json();
+        if (!response.ok) throw new Error(data.error || 'Could not load this week’s schedule');
+        if (requestVersion !== weeklyOutlookRequestVersion || sportAtRequest !== currentSport) return;
+        renderWeeklyOutlook(data);
+      } catch (error) {
+        if (requestVersion !== weeklyOutlookRequestVersion) return;
+        status.textContent = error.message;
+        container.innerHTML = '';
+      }
+    }
+
+    document.getElementById('teamWeekSelect').addEventListener('change', function () {
+      teamWeekStarts[currentSport] = this.value;
+      scheduleWeeklyOutlookReload();
+    });
 
     function ensureCustomSlots(sport) {
       if (!Array.isArray(customTeamSlots[sport])) {
@@ -363,6 +611,7 @@
             saveCustomTeam(false);
           });
           card.appendChild(name);
+          appendAvailability(card, slot.player);
           card.appendChild(points);
           card.appendChild(averages);
           card.appendChild(remove);
@@ -376,6 +625,7 @@
           ' starter estimates available). Bench and IR are not included.'
         : 'Add players to see your estimated fantasy points per game.';
       document.getElementById('saveCustomTeamBtn').disabled = selected.length === 0;
+      scheduleWeeklyOutlookReload();
     }
 
     function renderGeneratedTeam(data, sport, teamName) {
@@ -413,6 +663,7 @@
           : 'Latest final —';
         slot.appendChild(position);
         slot.appendChild(name);
+        if (player) appendAvailability(slot, player);
         slot.appendChild(points);
         slot.appendChild(research);
         slot.appendChild(final);
@@ -646,6 +897,9 @@
               slot.player.fullName = stats.fullName;
               slot.player.position = stats.position;
               slot.player.team = stats.team;
+              slot.player.status = stats.status;
+              slot.player.injuryStatus = stats.injuryStatus;
+              slot.player.injuryNote = stats.injuryNote;
               slot.player.seasonAverage = stats.seasonAverage;
               slot.player.recentAverage = stats.recentAverage;
               slot.player.projectedPoints = stats.projectedPoints;
@@ -999,6 +1253,7 @@
           var playerRecord = comparePlayers.find(function (candidate) { return candidate.id === player.id; });
           player.teamName = playerRecord && playerRecord.teamName ? playerRecord.teamName : player.team;
           name.textContent = player.fullName + ' · ' + player.position + ', ' + player.teamName;
+          appendAvailability(details, player);
           var metrics = document.createElement('span');
           metrics.className = 'muted';
           metrics.textContent = 'Season ' + (plausibleFantasyPointsPerGame(sport, player.seasonAverage) ? player.seasonAverage.toFixed(1) : '—') +
@@ -1249,6 +1504,7 @@
         }
         slot.appendChild(position);
         slot.appendChild(name);
+        if (player.fullName) appendAvailability(slot, player);
         slot.appendChild(role);
         slot.appendChild(projected);
         slot.appendChild(final);
@@ -1578,6 +1834,7 @@
       }
     });
 
+    populateTeamWeekOptions();
     loadFeed(); loadCompareOptions();
   </script>
 </body>

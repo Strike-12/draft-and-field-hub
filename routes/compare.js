@@ -35,9 +35,26 @@ function getRosterEntries(roster) {
 
 async function buildPlayerList(sport) {
   const leaguePath = SPORTS[sport];
-  const teamData = await fetchEspnJson(
-    `https://site.api.espn.com/apis/site/v2/sports/${leaguePath}/teams?limit=100`
-  );
+  const [teamData, injuryResult] = await Promise.all([
+    fetchEspnJson(`https://site.api.espn.com/apis/site/v2/sports/${leaguePath}/teams?limit=100`),
+    fetchEspnJson(`https://site.api.espn.com/apis/site/v2/sports/${leaguePath}/injuries`)
+      .then(data => ({ data, available: true }))
+      .catch(error => {
+        console.warn(`Could not load ${sport.toUpperCase()} injury report:`, error.message);
+        return { data: null, available: false };
+      })
+  ]);
+  const injuriesByPlayerId = new Map();
+  for (const team of injuryResult.data?.injuries || []) {
+    for (const injury of team.injuries || []) {
+      const playerCard = (injury.athlete?.links || []).find(link =>
+        Array.isArray(link.rel) && link.rel.includes('playercard')
+      );
+      const linkedPlayerId = playerCard?.href?.match(/\/id\/(\d+)/)?.[1];
+      const playerId = String(injury.athlete?.id || linkedPlayerId || '');
+      if (playerId) injuriesByPlayerId.set(playerId, injury);
+    }
+  }
   const teams = teamData.sports?.[0]?.leagues?.[0]?.teams
     ?.map(entry => entry.team)
     .filter(team => team?.abbreviation && team.isActive !== false);
@@ -52,14 +69,23 @@ async function buildPlayerList(sport) {
         `https://site.api.espn.com/apis/site/v2/sports/${leaguePath}/teams/${encodeURIComponent(team.abbreviation)}/roster`
       );
       return getRosterEntries(roster).map(player => ({
-        id: String(player.id || ''),
-        full_name: player.fullName || player.displayName || '',
-        position: player.position?.abbreviation || '—',
-        team: team.abbreviation,
-        teamName: team.displayName || [team.location, team.name].filter(Boolean).join(' '),
-        jersey: player.jersey || '',
-        status: player.status?.type || 'active'
-      })).filter(player => player.id && player.full_name);
+        player,
+        team
+      })).map(({ player, team }) => {
+        const injury = injuriesByPlayerId.get(String(player.id || ''));
+        return {
+          id: String(player.id || ''),
+          full_name: player.fullName || player.displayName || '',
+          position: player.position?.abbreviation || '—',
+          team: team.abbreviation,
+          teamName: team.displayName || [team.location, team.name].filter(Boolean).join(' '),
+          jersey: player.jersey || '',
+          status: player.status?.type || 'active',
+          injuryStatus: injury?.status || (injuryResult.available ? 'Active' : 'Status unavailable'),
+          injuryNote: String(injury?.shortComment || injury?.longComment || '').slice(0, 400),
+          injuryUpdatedAt: injury?.date || injuryResult.data?.timestamp || ''
+        };
+      }).filter(player => player.id && player.full_name);
     }));
     players.push(...rosters.flat());
   }
@@ -415,6 +441,8 @@ router.post('/players/:sport/stats', async (req, res) => {
             position: player.position,
             team: player.team,
             status: player.status,
+            injuryStatus: player.injuryStatus,
+            injuryNote: player.injuryNote,
             seasonAverage,
             recentAverage,
             projectedPoints,
@@ -477,8 +505,8 @@ router.post('/compare', async (req, res) => {
       sport,
       scoringLabel: label,
       comparison: {
-        playerA: { fullName: a.full_name, position: a.position, team: a.team, jersey: a.jersey, status: a.status, stats: statsResult(statsA) },
-        playerB: { fullName: b.full_name, position: b.position, team: b.team, jersey: b.jersey, status: b.status, stats: statsResult(statsB) },
+        playerA: { fullName: a.full_name, position: a.position, team: a.team, jersey: a.jersey, status: a.status, injuryStatus: a.injuryStatus, injuryNote: a.injuryNote, stats: statsResult(statsA) },
+        playerB: { fullName: b.full_name, position: b.position, team: b.team, jersey: b.jersey, status: b.status, injuryStatus: b.injuryStatus, injuryNote: b.injuryNote, stats: statsResult(statsB) },
         verdict
       }
     });

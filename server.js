@@ -55,6 +55,7 @@ app.use('/api', require('./routes/compare'));
 app.use('/api', require('./routes/assistant'));
 app.use('/api', require('./routes/user-teams'));
 app.use('/api', require('./routes/buildteam'));
+app.use('/api', require('./routes/weekly'));
 
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`Draft & Field Hub listening on http://localhost:${PORT}`);
