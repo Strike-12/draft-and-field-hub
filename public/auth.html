@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#0B132B" />
+  <title>Account | Draft &amp; Field Hub</title>
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+  <link rel="stylesheet" href="/css/turf-midnight.css" />
+  <link rel="stylesheet" href="/css/auth.css" />
+</head>
+<body>
+  <header class="topbar auth-topbar">
+    <a class="brand auth-brand" href="/">
+      <span class="logo">&#127944;</span>
+      <span class="brand-name">Draft &amp; Field Hub</span>
+    </a>
+    <a class="auth-link" href="/">Back to the app</a>
+  </header>
+  <main class="auth-main">
+    <section class="auth-card">
+      <p class="auth-eyebrow">DRAFT &amp; FIELD HUB</p>
+      <h1 id="authTitle">Your fantasy team starts here</h1>
+      <p id="authDescription" class="muted">Log in or create an account to get started.</p>
+      <div id="clerkMount" class="clerk-mount"></div>
+      <p id="authStatus" class="auth-status" role="status" aria-live="polite"></p>
+      <a class="auth-back-link" href="/">Continue without an account</a>
+    </section>
+  </main>
+  <script src="/js/auth-client.bundle.js"></script>
+</body>
+</html>
