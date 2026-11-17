@@ -202,6 +202,7 @@
     var customDefenseCache = [];
     var teamWeekStarts = { nfl: '', nba: '' };
     var weeklyOutlookRequestVersion = 0;
+    var teamWeekOptionsVersion = 0;
     var weeklyOutlookTimer;
 
     // Sport switcher
@@ -329,9 +330,53 @@
         end.toLocaleDateString(undefined, format);
     }
 
-    function populateTeamWeekOptions() {
+    async function populateTeamWeekOptions() {
       var select = document.getElementById('teamWeekSelect');
       var sport = currentSport;
+      var optionsVersion = ++teamWeekOptionsVersion;
+      if (sport === 'nfl') {
+        select.innerHTML = '';
+        var loadingOption = document.createElement('option');
+        loadingOption.textContent = 'Loading NFL weeks…';
+        loadingOption.value = '';
+        select.appendChild(loadingOption);
+        try {
+          var response = await fetch('/api/weekly/nfl/weeks');
+          var weekInfo = await response.json();
+          if (!response.ok) throw new Error(weekInfo.error || 'Could not load NFL weeks.');
+          if (optionsVersion !== teamWeekOptionsVersion || sport !== currentSport) return;
+          var currentWeek = weekInfo.currentWeek;
+          var firstWeek = Math.max(weekInfo.minWeek || 1, currentWeek - 2);
+          var lastWeek = Math.min(weekInfo.maxWeek || 18, currentWeek + 4);
+          var availableWeeks = [];
+          for (var nflWeek = firstWeek; nflWeek <= lastWeek; nflWeek++) {
+            var option = document.createElement('option');
+            option.value = String(nflWeek);
+            option.textContent = (nflWeek === currentWeek ? 'This week · ' :
+              nflWeek === currentWeek - 1 ? 'Last week · ' :
+              nflWeek === currentWeek + 1 ? 'Next week · ' : '') +
+              'Week ' + nflWeek;
+            select.appendChild(option);
+            availableWeeks.push(option.value);
+          }
+          if (!availableWeeks.includes(String(teamWeekStarts.nfl))) {
+            teamWeekStarts.nfl = String(currentWeek);
+          }
+          select.value = teamWeekStarts.nfl;
+          scheduleWeeklyOutlookReload();
+        } catch (error) {
+          if (optionsVersion !== teamWeekOptionsVersion || sport !== currentSport) return;
+          select.innerHTML = '';
+          var unavailableOption = document.createElement('option');
+          unavailableOption.textContent = 'NFL weeks unavailable';
+          unavailableOption.value = '';
+          select.appendChild(unavailableOption);
+          document.getElementById('weeklyOutlookStatus').textContent = error.message;
+          document.getElementById('weeklyOutlookResults').innerHTML = '';
+        }
+        return;
+      }
+
       var currentWeek = mondayForDate(new Date());
       if (!teamWeekStarts[sport]) teamWeekStarts[sport] = currentWeek;
       select.innerHTML = '';
@@ -352,6 +397,7 @@
         return option.value === teamWeekStarts[sport];
       })) teamWeekStarts[sport] = currentWeek;
       select.value = teamWeekStarts[sport];
+      scheduleWeeklyOutlookReload();
     }
 
     function scheduleWeeklyOutlookReload() {
@@ -370,9 +416,10 @@
     function renderWeeklyOutlook(data) {
       var container = document.getElementById('weeklyOutlookResults');
       container.innerHTML = '';
-      var range = weekRangeLabel(data.weekStart);
+      var range = data.sport === 'nfl'
+        ? (data.weekLabel || 'NFL Week ' + data.weekNumber)
+        : weekRangeLabel(data.weekStart);
       document.getElementById('weeklyOutlookStatus').textContent =
-        (data.sport === 'nfl' && data.weekNumber ? 'NFL Week ' + data.weekNumber + ' · ' : '') +
         range + ' · ' + (data.scoringLabel || 'ESPN scoring') +
         ' · Injury labels show the current ESPN report.';
 
@@ -489,14 +536,23 @@
       }
 
       var weekStart = teamWeekStarts[sportAtRequest] || mondayForDate(new Date());
-      status.textContent = 'Loading the ' + weekRangeLabel(weekStart) + ' schedule and scores…';
+      if (sportAtRequest === 'nfl' && !/^\d+$/.test(weekStart)) {
+        status.textContent = 'Loading NFL week options…';
+        container.innerHTML = '';
+        return;
+      }
+      status.textContent = 'Loading the ' +
+        (sportAtRequest === 'nfl' ? 'NFL Week ' + weekStart : weekRangeLabel(weekStart)) +
+        ' schedule and scores…';
       container.innerHTML = '';
       try {
         var response = await fetch('/api/weekly/' + sportAtRequest, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            weekStart: weekStart,
+            ...(sportAtRequest === 'nfl'
+              ? { weekNumber: Number(weekStart) }
+              : { weekStart: weekStart }),
             players: selectedPlayers,
             scoringSettings: leagueScoringSettings[sportAtRequest]
           })
@@ -1756,6 +1812,10 @@
       });
       panel.appendChild(title);
       panel.appendChild(list);
+      var availability = document.createElement('div');
+      availability.className = 'compare-availability';
+      appendAvailability(availability, player);
+      panel.appendChild(availability);
       renderPlayerStats(panel, player.stats);
     }
 

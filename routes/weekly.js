@@ -55,7 +55,22 @@ async function mapWithConcurrency(items, limit, callback) {
   return results;
 }
 
-async function fetchWeekScoreboards(sport, leaguePath, start) {
+async function fetchWeekScoreboards(sport, leaguePath, start, weekNumber) {
+  if (sport === 'nfl') {
+    const scoreboard = await fetchEspnJson(
+      `https://site.api.espn.com/apis/site/v2/sports/${leaguePath}/scoreboard?seasontype=2&week=${weekNumber}`
+    );
+    const byeTeams = new Set((scoreboard.week?.teamsOnBye || [])
+      .map(team => team.abbreviation).filter(Boolean));
+    return {
+      events: scoreboard.events || [],
+      byeTeams,
+      weekNumber: Number(scoreboard.week?.number) || weekNumber,
+      weekLabel: `NFL Week ${Number(scoreboard.week?.number) || weekNumber}`,
+      failedDates: []
+    };
+  }
+
   const dates = Array.from({ length: 7 }, (_, offset) => {
     const date = new Date(start);
     date.setUTCDate(date.getUTCDate() + offset);
@@ -98,6 +113,9 @@ async function fetchWeekScoreboards(sport, leaguePath, start) {
     events,
     byeTeams,
     weekNumber: weekNumbers.length === 1 ? weekNumbers[0] : null,
+    weekLabel: `${start.toISOString().slice(0, 10)}–${new Date(
+      start.getTime() + 6 * 86400000
+    ).toISOString().slice(0, 10)}`,
     failedDates: failures
   };
 }
@@ -125,24 +143,24 @@ function summaryAthletes(summary) {
   return athletes;
 }
 
-async function buildWeeklyOutlook(sport, start, requestedPlayers, scoringSettings) {
+async function buildWeeklyOutlook(sport, start, weekNumber, requestedPlayers, scoringSettings) {
   const leaguePath = SPORTS[sport];
-  const weekEnd = new Date(start);
-  weekEnd.setUTCDate(weekEnd.getUTCDate() + 6);
-  const startLabel = start.toISOString().slice(0, 10);
-  const endLabel = weekEnd.toISOString().slice(0, 10);
+  const weekEnd = start ? new Date(start) : null;
+  if (weekEnd) weekEnd.setUTCDate(weekEnd.getUTCDate() + 6);
+  const startLabel = start ? start.toISOString().slice(0, 10) : '';
+  const endLabel = weekEnd ? weekEnd.toISOString().slice(0, 10) : '';
   const scoringKey = scoringSignature(sport, scoringSettings);
   const idsKey = requestedPlayers.map(player =>
     `${player.id}:${player.slotType}:${player.team}`
   ).sort().join('|');
-  const cacheKey = `${sport}:${startLabel}:${scoringKey}:${idsKey}`;
+  const cacheKey = `${sport}:${sport === 'nfl' ? `week-${weekNumber}` : startLabel}:${scoringKey}:${idsKey}`;
   const cached = weeklyCache.get(cacheKey);
   if (cached && cached.expiresAt > Date.now()) return cached.promise;
 
   const entry = { expiresAt: Date.now() + WEEK_CACHE_MS };
   entry.promise = (async () => {
     const [schedule, roster] = await Promise.all([
-      fetchWeekScoreboards(sport, leaguePath, start),
+      fetchWeekScoreboards(sport, leaguePath, start, weekNumber),
       getPlayerList(sport)
     ]);
     const rosterById = new Map(roster.map(player => [player.id, player]));
@@ -263,6 +281,7 @@ async function buildWeeklyOutlook(sport, start, requestedPlayers, scoringSetting
       weekStart: startLabel,
       weekEnd: endLabel,
       weekNumber: schedule.weekNumber,
+      weekLabel: schedule.weekLabel,
       updatedAt: new Date().toISOString(),
       scoringLabel: require('../lib/fantasy-scoring').scoringLabel(sport, scoringSettings),
       projectionNote: 'Estimate uses current-season fantasy average (70%) and recent average (30%), multiplied by games scheduled. It is not matchup-specific or an archived pregame projection.',
@@ -289,11 +308,36 @@ async function buildWeeklyOutlook(sport, start, requestedPlayers, scoringSetting
   return entry.promise;
 }
 
+router.get('/weekly/nfl/weeks', async (_req, res) => {
+  try {
+    const scoreboard = await fetchEspnJson(
+      'https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard'
+    );
+    const currentWeek = Number(scoreboard.week?.number);
+    if (!Number.isInteger(currentWeek) || currentWeek < 1 || currentWeek > 18) {
+      throw new Error('ESPN did not return a current regular-season week.');
+    }
+    res.set('Cache-Control', 'no-store');
+    res.json({
+      currentWeek,
+      seasonYear: Number(scoreboard.season?.year) || null,
+      minWeek: 1,
+      maxWeek: 18
+    });
+  } catch (error) {
+    res.status(502).json({ error: `Could not load NFL week options: ${error.message}` });
+  }
+});
+
 router.post('/weekly/:sport', async (req, res) => {
   const sport = String(req.params.sport || '').toLowerCase();
   if (!SPORTS[sport]) return res.status(400).json({ error: "sport must be 'nfl' or 'nba'" });
-  const start = parseWeekStart(req.body?.weekStart);
-  if (!start) return res.status(400).json({ error: 'Choose a valid week.' });
+  const start = sport === 'nba' ? parseWeekStart(req.body?.weekStart) : null;
+  const weekNumber = sport === 'nfl' ? Number(req.body?.weekNumber) : null;
+  if (sport === 'nba' && !start) return res.status(400).json({ error: 'Choose a valid week.' });
+  if (sport === 'nfl' && (!Number.isInteger(weekNumber) || weekNumber < 1 || weekNumber > 18)) {
+    return res.status(400).json({ error: 'Choose an NFL regular-season week from 1 to 18.' });
+  }
   const players = [...new Map((Array.isArray(req.body?.players) ? req.body.players : [])
     .slice(0, 30)
     .map(player => {
@@ -309,7 +353,9 @@ router.post('/weekly/:sport', async (req, res) => {
   ).values()];
 
   try {
-    const data = await buildWeeklyOutlook(sport, start, players, req.body?.scoringSettings);
+    const data = await buildWeeklyOutlook(
+      sport, start, weekNumber, players, req.body?.scoringSettings
+    );
     res.set('Cache-Control', 'no-store');
     res.json(data);
   } catch (error) {
