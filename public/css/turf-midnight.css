@@ -137,6 +137,7 @@ body.light .slot.filled .slot-player { color: #0B132B; }
   border-radius: 10px;
 }
 .saved-team-controls label { grid-column: 1 / -1; }
+.saved-team-hint { grid-column: 1 / -1; margin: -4px 0 2px; font-size: 0.78rem; }
 .custom-builder-layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr); gap: 16px; }
 .custom-search-panel, .custom-lineup-panel {
   display: grid;
