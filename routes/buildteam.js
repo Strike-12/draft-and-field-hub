@@ -127,6 +127,11 @@ function selectSlots(sport, players, avoidPlayerIds = []) {
   return { slots, note: 'NBA lineup uses two guards, two forwards, one center, and five flexible spots.' };
 }
 
+function canStart(player) {
+  return !/^(out|injured reserve|injured|inactive|suspended|doubtful)$/i
+    .test(String(player.injuryStatus || '').trim());
+}
+
 async function buildProjectedTeam(sport, scoringSettings, avoidPlayerIds = []) {
   const signature = scoringSignature(sport, scoringSettings);
   const avoidKey = [...new Set(avoidPlayerIds.map(String))].sort().join(',');
@@ -142,7 +147,7 @@ async function buildProjectedTeam(sport, scoringSettings, avoidPlayerIds = []) {
     ]);
     const rosterById = new Map(players.map(player => [player.id, player]));
     const candidates = candidateIds.map(id => rosterById.get(id))
-      .filter(player => player && (!player.status || player.status === 'active'));
+      .filter(player => player && (!player.status || player.status === 'active') && canStart(player));
     if (!candidates.length) throw new Error(`ESPN returned no current ${sport.toUpperCase()} stat leaders.`);
 
     const ranked = await mapWithConcurrency(candidates, 10, async player => {
@@ -153,6 +158,8 @@ async function buildProjectedTeam(sport, scoringSettings, avoidPlayerIds = []) {
         fullName: player.full_name,
         position: player.position,
         team: player.team,
+        injuryStatus: player.injuryStatus,
+        injuryNote: player.injuryNote,
         seasonAverage: stats.fantasyPointsAverage,
         recentAverage: stats.recentFantasyPointsAverage,
         projectedPoints: Number.isFinite(stats.fantasyPointsAverage)
@@ -290,23 +297,49 @@ async function addFantasyStatsToRoster(sport, roster, scoringSettings) {
   try {
     players = await getPlayerList(sport);
   } catch {
-    return roster.map(player => ({ ...player, projectedPoints: null, finalPoints: null, finalDate: '', statsUnavailable: true }));
+    return roster.map(player => ({
+      ...player,
+      injuryStatus: 'Status unavailable',
+      injuryNote: '',
+      projectedPoints: null,
+      finalPoints: null,
+      finalDate: '',
+      statsUnavailable: true
+    }));
   }
   const byId = new Map(players.map(player => [player.id, player]));
   return mapWithConcurrency(roster, 10, async rosterPlayer => {
     const currentPlayer = byId.get(rosterPlayer.id);
-    if (!currentPlayer) return { ...rosterPlayer, projectedPoints: null, finalPoints: null, finalDate: '', statsUnavailable: true };
+    if (!currentPlayer) return {
+      ...rosterPlayer,
+      injuryStatus: 'Status unavailable',
+      injuryNote: '',
+      projectedPoints: null,
+      finalPoints: null,
+      finalDate: '',
+      statsUnavailable: true
+    };
     try {
       const stats = await getPlayerStats(sport, currentPlayer, scoringSettings);
       return {
         ...rosterPlayer,
+        injuryStatus: currentPlayer.injuryStatus,
+        injuryNote: currentPlayer.injuryNote,
         projectedPoints: stats.fantasyPointsAverage,
         finalPoints: stats.lastFinalPoints,
         finalDate: stats.lastFinalDate,
         statsUnavailable: false
       };
     } catch {
-      return { ...rosterPlayer, projectedPoints: null, finalPoints: null, finalDate: '', statsUnavailable: true };
+      return {
+        ...rosterPlayer,
+        injuryStatus: currentPlayer.injuryStatus,
+        injuryNote: currentPlayer.injuryNote,
+        projectedPoints: null,
+        finalPoints: null,
+        finalDate: '',
+        statsUnavailable: true
+      };
     }
   });
 }
