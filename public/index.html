@@ -764,8 +764,7 @@
           projectionBasis: data.projectionBasis,
           scoringLabel: data.scoringLabel
         },
-        providerKey: 'generated:' + sport + ':' +
-          (crypto.randomUUID ? crypto.randomUUID() : String(Date.now()))
+        providerKey: 'generated:' + sport + ':latest'
       }, false);
     }
 
@@ -806,10 +805,30 @@
       }
     }
 
+    function hasSavedRoster(team) {
+      return Boolean(team && team.teamData &&
+        Array.isArray(team.teamData.roster) &&
+        team.teamData.roster.some(function (player) {
+          return String(player && (player.fullName || player.full_name) || '').trim();
+        }));
+    }
+
+    function normalizeSavedTeams(teams) {
+      var generatedSports = new Set();
+      return (Array.isArray(teams) ? teams : []).filter(function (team) {
+        if (!hasSavedRoster(team)) return false;
+        if (team.source === 'generated') {
+          if (generatedSports.has(team.sport)) return false;
+          generatedSports.add(team.sport);
+        }
+        return true;
+      });
+    }
+
     function readLocalTeams() {
       try {
         var parsed = JSON.parse(localStorage.getItem('draftFieldSavedTeams') || '[]');
-        return Array.isArray(parsed) ? parsed : [];
+        return normalizeSavedTeams(parsed);
       } catch (error) {
         return [];
       }
@@ -854,7 +873,8 @@
         option.textContent = team.sport.toUpperCase() + ' · ' + team.name +
           (managerName ? ' · ' + managerName : '') +
           (team.leagueName ? ' · ' + team.leagueName : '') +
-          ' (' + (team.source === 'espn' ? 'ESPN' : team.source === 'generated' ? 'built' : 'custom') + ')';
+          ' (' + (team.source === 'espn' ? 'ESPN' :
+            team.source === 'generated' ? 'latest auto-build' : 'custom') + ')';
         select.appendChild(option);
       });
       if (savedTeams.some(function (team) { return String(team.id) === previous; })) select.value = previous;
@@ -910,18 +930,80 @@
         var response = await fetch('/api/my-teams', { credentials: 'same-origin' });
         var data = await response.json();
         if (!response.ok) throw new Error(data.error || 'Could not load saved teams');
-        savedTeams = data.teams || [];
+        savedTeams = await migrateLocalTeamsToAccount(data.teams || []);
         refreshSavedTeamOptions();
         var latestBySport = {};
+        var latestEspnBySport = {};
         savedTeams.forEach(function (team) {
           if (!latestBySport[team.sport]) latestBySport[team.sport] = team;
+          if (team.source === 'espn' && !latestEspnBySport[team.sport]) {
+            latestEspnBySport[team.sport] = team;
+          }
         });
         Object.keys(latestBySport).forEach(function (sport) {
           restoreSavedTeam(latestBySport[sport], false);
         });
+        Object.keys(latestEspnBySport).forEach(function (sport) {
+          var espnTeam = latestEspnBySport[sport];
+          if (latestBySport[sport]?.id === espnTeam.id) return;
+          var leagueUrl = espnTeam.teamData?.leagueUrl || espnTeam.leagueUrl;
+          var teamId = espnTeam.teamData?.teamId || espnTeam.teamId;
+          if (leagueUrl && teamId) reloadLeagueTeamChoices(leagueUrl, teamId, false);
+        });
       } catch (error) {
         console.warn('Could not restore saved teams:', error.message);
       }
+    }
+
+    async function migrateLocalTeamsToAccount(accountTeams) {
+      var localTeams = readLocalTeams();
+      var merged = normalizeSavedTeams(accountTeams);
+      if (!localTeams.length) return merged;
+      var migratedIds = new Set();
+      for (var i = 0; i < localTeams.length; i++) {
+        var localTeam = localTeams[i];
+        var duplicate = merged.find(function (team) {
+          if (team.source !== localTeam.source || team.sport !== localTeam.sport) return false;
+          if (team.providerKey === localTeam.providerKey) return true;
+          return team.source === 'espn' &&
+            String(team.teamData?.teamId || '') === String(localTeam.teamData?.teamId || localTeam.teamId || '') &&
+            String(team.teamData?.leagueUrl || '') === String(localTeam.teamData?.leagueUrl || localTeam.leagueUrl || '');
+        });
+        if (duplicate) {
+          migratedIds.add(String(localTeam.id));
+          continue;
+        }
+        try {
+          var migrationPayload = Object.assign({}, localTeam, {
+            teamData: Object.assign({}, localTeam.teamData, {
+              roster: localTeam.teamData.roster.map(function (player) {
+                return Object.assign({}, player, {
+                  fullName: player.fullName || player.full_name || ''
+                });
+              })
+            })
+          });
+          var response = await fetch('/api/my-teams', {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(migrationPayload)
+          });
+          var data = await response.json();
+          if (!response.ok) throw new Error(data.error || 'Could not move a saved team to your account.');
+          merged.unshift(data.team);
+          migratedIds.add(String(localTeam.id));
+        } catch (error) {
+          console.warn('Could not move a device-saved team to the account:', error.message);
+        }
+      }
+      if (migratedIds.size) {
+        var currentLocal = JSON.parse(localStorage.getItem('draftFieldSavedTeams') || '[]');
+        var remaining = (Array.isArray(currentLocal) ? currentLocal : [])
+          .filter(function (team) { return !migratedIds.has(String(team.id)); });
+        localStorage.setItem('draftFieldSavedTeams', JSON.stringify(remaining));
+      }
+      return normalizeSavedTeams(merged);
     }
 
     async function refreshRestoredCustomStats(sport) {
@@ -988,13 +1070,14 @@
       if (sport === currentSport) renderCustomLineup();
     }
 
-    function renderLeagueTeamChoices(data, leagueUrl, selectedTeamId) {
+    function renderLeagueTeamChoices(data, leagueUrl, selectedTeamId, revealPicker) {
       var sport = data.sport;
       connectedLeagues[sport] = {
         leagueUrl: leagueUrl,
         leagueName: data.leagueName,
         teams: data.teams || [],
-        scoringSettings: data.scoringSettings || null
+        scoringSettings: data.scoringSettings || null,
+        selectedTeamId: selectedTeamId || ''
       };
       pendingLeagueUrl = leagueUrl;
       leagueScoringSettings[sport] = data.scoringSettings || leagueScoringSettings[sport];
@@ -1009,10 +1092,10 @@
       if (selectedTeamId && (data.teams || []).some(function (team) { return String(team.id) === String(selectedTeamId); })) {
         select.value = String(selectedTeamId);
       }
-      document.getElementById('teamPicker').classList.remove('hidden');
+      if (revealPicker !== false) document.getElementById('teamPicker').classList.remove('hidden');
     }
 
-    async function reloadLeagueTeamChoices(leagueUrl, selectedTeamId) {
+    async function reloadLeagueTeamChoices(leagueUrl, selectedTeamId, revealPicker) {
       try {
         var response = await fetch('/api/sync/espn/auto', {
           method: 'POST',
@@ -1021,7 +1104,7 @@
         });
         var data = await response.json();
         if (!response.ok) throw new Error(data.error || 'Could not reload league teams');
-        renderLeagueTeamChoices(data, leagueUrl, selectedTeamId);
+        renderLeagueTeamChoices(data, leagueUrl, selectedTeamId, revealPicker);
       } catch (error) {
         console.warn('Could not reload ESPN league teams:', error.message);
       }
@@ -1081,6 +1164,12 @@
           });
           return player ? Object.assign({}, player, { slotType: slot.slotType }) : { slotType: slot.slotType, player: null };
         });
+        if (!projectedTeam.some(function (slot) { return Boolean(slot.id || slot.player); }) &&
+            Array.isArray(data.roster) && data.roster.length) {
+          projectedTeam = data.roster.map(function (player) {
+            return Object.assign({}, player, { slotType: player.slotType || 'BENCH' });
+          });
+        }
         if (currentSport !== sport) {
           document.getElementById('projected').classList.add('hidden');
           switchSport(sport);

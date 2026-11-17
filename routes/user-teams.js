@@ -79,8 +79,21 @@ function makeTeamData(input, leagueInfo) {
 
 router.get('/my-teams', requireSignedIn, async (req, res) => {
   try {
+    const teams = await listSavedTeams(req.clerkUserId);
+    const generatedSports = new Set();
+    const visibleTeams = teams.filter(team => {
+      const roster = team.teamData?.roster;
+      if (!Array.isArray(roster) || !roster.some(player =>
+        String(player?.fullName || player?.full_name || '').trim()
+      )) return false;
+      if (team.source === 'generated') {
+        if (generatedSports.has(team.sport)) return false;
+        generatedSports.add(team.sport);
+      }
+      return true;
+    });
     res.set('Cache-Control', 'no-store');
-    res.json({ teams: await listSavedTeams(req.clerkUserId) });
+    res.json({ teams: visibleTeams });
   } catch (error) {
     console.error('Could not load saved teams:', error.message);
     res.status(500).json({ error: 'Could not load your saved teams right now.' });
